@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich DB - EBS Volume (30GB gp3) with AWS Backup enabled.
+  Deploy this first, then pass the VolumeId output into the EC2 stack.
+
+Parameters:
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: >
+      AZ where the EBS volume will be created.
+      Must match the AZ of the EC2 instance in the companion stack.
+    Default: ap-south-1a
+
+  VolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    Description: Size of the EBS volume in GB.
+
+  BackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+    Description: Number of daily snapshots to retain.
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+
+  # ── EBS Volume ────────────────────────────────────────────────────────────
+  ImmichDBVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Retain          # Safety: never auto-delete the DB data volume
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Size: !Ref VolumeSize
+      VolumeType: gp3
+      Iops: 3000                    # gp3 baseline, free of charge
+      Throughput: 125               # MiB/s, gp3 baseline, free of charge
+      Encrypted: true               # Encrypt at rest using AWS managed key
+      MultiAttachEnabled: false
+      Tags:
+        - Key: Name
+          Value: !Sub immich-db-data-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ── AWS Backup: Vault ─────────────────────────────────────────────────────
+  ImmichBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Sub immich-db-vault-${Environment}
+      BackupVaultTags:
+        Environment: !Ref Environment
+        ManagedBy: CloudFormation
+
+  # ── AWS Backup: Plan (daily snapshot, configurable retention) ─────────────
+  ImmichBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub immich-db-backup-plan-${Environment}
+        BackupPlanRule:
+          - RuleName: DailyBackup
+            TargetBackupVault: !Ref ImmichBackupVault
+            ScheduleExpression: cron(0 2 * * ? *)   # 02:00 UTC daily
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: !Ref BackupRetentionDays
+            RecoveryPointTags:
+              Environment: !Ref Environment
+
+  # ── IAM Role for AWS Backup ───────────────────────────────────────────────
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub immich-backup-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  # ── AWS Backup: Selection (tags the EBS volume into the plan) ─────────────
+  ImmichBackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref ImmichBackupPlan
+      BackupSelection:
+        SelectionName: ImmichDBVolumeSelection
+        IamRoleArn: !GetAtt BackupRole.Arn
+        Resources:
+          - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/${ImmichDBVolume}
+
+Outputs:
+  VolumeId:
+    Description: EBS Volume ID — pass this into the EC2 stack parameter
+    Value: !Ref ImmichDBVolume
+    Export:
+      Name: !Sub ${AWS::StackName}-VolumeId
+
+  VolumeAZ:
+    Description: AZ of the EBS volume — EC2 must be in the same AZ
+    Value: !Ref AvailabilityZone
+    Export:
+      Name: !Sub ${AWS::StackName}-VolumeAZ
+
+  BackupVaultName:
+    Description: Name of the AWS Backup vault
+    Value: !Ref ImmichBackupVault

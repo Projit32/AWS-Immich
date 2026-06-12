@@ -1,0 +1,60 @@
+# samconfig.toml — Immich DB stacks (EBS + EC2)
+# Deploy order: ebs stack first, then ec2 stack.
+#
+# Usage:
+#   sam deploy --config-env ebs-prod   ← step 1
+#   sam deploy --config-env ec2-prod   ← step 2 (fill EBSVolumeId from step 1 output)
+#
+# To deploy to a different environment, duplicate the env blocks and
+# change the config-env name and parameter values accordingly.
+
+version = 0.1
+
+# ── EBS Stack ─────────────────────────────────────────────────────────────────
+[ebs.deploy.parameters]
+stack_name        = "immich-db-ebs-prod"
+template_file     = "immich-db-ebs.yaml"
+region            = "us-east-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+parameter_overrides = [
+  "AvailabilityZone=us-east-1a",
+  "VolumeSize=30",
+  "BackupRetentionDays=7",
+  "Environment=prod"
+]
+
+# Tags applied to all resources in the stack
+tags = [
+  "Project=immich",
+  "Environment=prod",
+  "ManagedBy=sam"
+]
+
+# ── EC2 Stack ─────────────────────────────────────────────────────────────────
+[ec2.deploy.parameters]
+stack_name        = "immich-db-ec2-prod"
+template_file     = "immich-db-ec2.yaml"
+region            = "us-east-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+parameter_overrides = [
+  "VpcId=vpc-xxxx",
+  "SubnetId=subnet-xxxx",            # Must be in ap-south-1a to match EBS AZ
+  "EBSVolumeId=vol-xxxx",            # From immich-db-ebs-prod stack output: VolumeId
+  "InstanceType=t4g.small",
+  "ImmichPostgresVersion=14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+  "AllowedCIDR=0.0.0.0/0",              # Tighten this to your actual VPC CIDR
+  "Environment=prod",
+  "CredentialSSMName=/immich/conf/db"
+]
+
+tags = [
+  "Project=immich",
+  "Environment=prod",
+  "ManagedBy=sam"
+]

@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich DB - EC2 instance (ECS-optimized AMI) that attaches the EBS volume,
+  mounts it at /data/postgres, and runs the Immich Postgres Docker container
+  with data persisted to that mount. Credentials are read from the pre-existing
+  SSM parameter (format: user=x,password=y,db=z).
+  Deploy AFTER the EBS stack.
+
+Parameters:
+
+  # ── Networking ─────────────────────────────────────────────────────────────
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to launch the instance into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Subnet for the EC2 instance. Must be in the same AZ as the EBS volume.
+
+  # ── EBS Reference ──────────────────────────────────────────────────────────
+  EBSVolumeId:
+    Type: String
+    Description: >
+      Volume ID of the EBS volume from the EBS stack (e.g. vol-0abc123).
+      Get this from the EBS stack's VolumeId output.
+
+  # ── Instance ───────────────────────────────────────────────────────────────
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    AllowedValues:
+      - t4g.micro
+      - t4g.small
+      - t4g.medium
+      - t4g.large
+    Description: t4g.small is the recommended minimum for Postgres under light load.
+
+  KeyName:
+    Type: String
+    Default: ''
+    Description: EC2 Key Pair name for SSH access. Leave blank to skip.
+
+  # ── Postgres Image ─────────────────────────────────────────────────────────
+  ImmichPostgresVersion:
+    Type: String
+    Default: 'release'
+    Description: >
+      Tag of ghcr.io/immich-app/postgres to pull.
+      Use 'release' for latest stable, or pin to a specific tag e.g. v0.2.0.
+
+  # ── Access ─────────────────────────────────────────────────────────────────
+  AllowedCIDR:
+    Type: String
+    Default: 10.0.0.0/8
+    Description: >
+      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  CredentialSSMName:
+    Type: String
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyName, '']]
+
+Resources:
+
+  # ── Security Group ────────────────────────────────────────────────────────
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Immich DB - Postgres and SSH access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedCIDR
+          Description: Postgres from VPC
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCIDR
+          Description: SSH access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound (Docker pull, SSM, ECR, etc.)
+      Tags:
+        - Key: Name
+          Value: !Sub immich-db-sg-${Environment}
+
+  # ── IAM Role for EC2 ──────────────────────────────────────────────────────
+  DBInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub immich-db-ec2-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadImmichDBCreds
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub
+                  - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SSMPath}
+                  - SSMPath: !Ref CredentialSSMName
+
+  DBInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref DBInstanceRole
+
+  # ── EC2 Instance ──────────────────────────────────────────────────────────
+  DBInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}'
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref DBSecurityGroup
+      IamInstanceProfile: !Ref DBInstanceProfile
+      KeyName: !If [HasKeyPair, !Ref KeyName, !Ref AWS::NoValue]
+
+      Volumes:
+        - VolumeId: !Ref EBSVolumeId
+          Device: /dev/xvdf
+
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee /var/log/immich-db-init.log | logger -t immich-db-init) 2>&1
+
+          echo "=== Immich DB Init: $(date) ==="
+
+          # ── 1. Wait for EBS volume to be attached ──────────────────────────
+          echo "Waiting for /dev/xvdf..."
+          for i in $(seq 1 30); do
+            [ -b /dev/xvdf ] && echo "Volume ready" && break
+            echo "Attempt $i: not yet attached, retrying in 5s..."
+            sleep 5
+          done
+
+          if [ ! -b /dev/xvdf ]; then
+            echo "ERROR: /dev/xvdf not attached after 150s. Aborting."
+            exit 1
+          fi
+
+          # ── 2. Format only if the volume has no filesystem (new volume) ────
+          FS_TYPE=$(blkid -o value -s TYPE /dev/xvdf || true)
+          if [ -z "$FS_TYPE" ]; then
+            echo "New volume detected — formatting as ext4"
+            mkfs.ext4 -L immich-db /dev/xvdf
+          else
+            echo "Existing filesystem ($FS_TYPE) — skipping format, data preserved"
+          fi
+
+          # ── 3. Mount and persist via fstab ─────────────────────────────────
+          mkdir -p /data/postgres
+          mount /dev/xvdf /data/postgres
+
+          DEVICE_UUID=$(blkid -s UUID -o value /dev/xvdf)
+          if ! grep -q "$DEVICE_UUID" /etc/fstab; then
+            echo "UUID=$DEVICE_UUID /data/postgres ext4 defaults,nofail 0 2" >> /etc/fstab
+          fi
+
+          # Immich postgres image runs as uid 999
+          mkdir -p /data/postgres/data
+          chown -R 999:999 /data/postgres
+
+          # ── 4. Parse credentials from SSM ──────────────────────────────────
+          # SSM value format: user=username,password=password,db=immich_db
+          echo "Fetching credentials from SSM /immich/db/creds..."
+          SSM_VALUE=$(aws ssm get-parameter \
+            --name ${CredentialSSMName} \
+            --with-decryption \
+            --region ${AWS::Region} \
+            --query "Parameter.Value" \
+            --output text)
+
+          # Parse each key=value pair
+          DB_USER=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^user='     | cut -d= -f2)
+          DB_PASS=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^password=' | cut -d= -f2)
+          DB_NAME=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^db='       | cut -d= -f2)
+
+          if [ -z "$DB_USER" ] || [ -z "$DB_PASS" ] || [ -z "$DB_NAME" ]; then
+            echo "ERROR: Failed to parse one or more credentials from SSM value."
+            echo "Expected format: user=x,password=y,db=z"
+            exit 1
+          fi
+
+          echo "Parsed credentials — user=$DB_USER, db=$DB_NAME"
+
+          # ── 5. Build Immich Postgres image ──────────────────────────────────
+          echo "Building docker file"
+          
+          mkdir -p /opt/immich-db
+
+          # Make Dockerfile
+          cat > /opt/immich-db/Dockerfile <<EOF
+          FROM ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
+          
+          ENV POSTGRES_USER="$DB_USER"
+          ENV POSTGRES_PASSWORD="$DB_PASS"
+          ENV POSTGRES_DB="$DB_NAME"
+          
+          EXPOSE 5432
+          EOF
+          
+          docker build -t immich-postgres /opt/immich-db
+
+          # ── 6. create docker file ────────────────────────────────────────
+          
+          
+          
+          # ── 7. Systemd service for lifecycle management ────────────────────
+          cat > /etc/systemd/system/immich-db.service << 'SERVICE'
+          [Unit]
+          Description=Immich Postgres Database
+          Requires=docker.service
+          After=docker.service network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          WorkingDirectory=/opt/immich-db
+          ExecStart=/usr/bin/docker run \
+              --name immich-postgres \
+              --restart=no \
+              -p 5432:5432 \
+              -v /data/postgres/data:/var/lib/postgresql/data \
+              immich-postgres
+          
+          ExecStop=/usr/bin/docker stop -t 30 immich-postgres
+          ExecStopPost=-/usr/bin/docker rm -f immich-postgres
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable immich-db.service
+          systemctl start immich-db.service
+
+          echo "=== Immich DB Init complete: $(date) ==="
+
+      Tags:
+        - Key: Name
+          Value: !Sub immich-db-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ── Elastic IP ────────────────────────────────────────────────────────────
+  DBIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref DBInstance
+      Tags:
+        - Key: Name
+          Value: !Sub immich-db-eip-${Environment}
+
+Outputs:
+  InstanceId:
+    Value: !Ref DBInstance
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceId
+
+  PrivateIP:
+    Description: Private IP — use as DB_HOST in Immich app config
+    Value: !GetAtt DBInstance.PrivateIp
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateIP
+
+  PublicIP:
+    Description: Elastic IP — for SSH/admin access only
+    Value: !Ref DBIP
+
+  DBSecurityGroupId:
+    Description: Reference this SG in the app stack to allow Postgres ingress
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-DBSecurityGroupId
