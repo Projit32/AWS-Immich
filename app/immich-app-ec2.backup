@@ -1,0 +1,341 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich App - EC2 instance (ECS-optimized AMI, Graviton t4g) running either
+  the immich-server (API) or immich-microservices container via plain Docker.
+  DB and cache config are read from two pre-existing SSM parameters at boot.
+  SSM format:
+    /immich/db/conf    → db_host=x,db_pass=y,db_name=a
+    /immich/cache/conf → cache_host=x,cache_port=y
+
+Parameters:
+
+  # ── Networking ─────────────────────────────────────────────────────────────
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to launch the instance into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for the EC2 instance.
+
+  CacheSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >
+      Security group of the ElastiCache Valkey cluster (exported from cache
+      stack as immich-cache-prod-CacheSecurityGroupId). An ingress rule on
+      port 6379 will be added to this SG from the app instance SG.
+
+  S3FilesSGId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >
+      Security group of the S3 Files mount targets (exported from storage
+      stack as immich-storage-prod-S3FilesSGId). An ingress rule on
+      port 2049 (NFS) will be added to this SG from the app instance SG.
+
+  # ── Instance ───────────────────────────────────────────────────────────────
+  InstanceType:
+    Type: String
+    Default: t4g.medium
+    AllowedValues:
+      - t4g.small
+      - t4g.medium
+      - t4g.large
+      - t4g.xlarge
+    Description: t4g.medium recommended for API+microservices colocated.
+
+  # ── Container Mode ─────────────────────────────────────────────────────────
+  WorkerMode:
+    Type: String
+    Default: api
+    AllowedValues:
+      - api
+      - microservices
+    Description: >
+      api         → runs immich-server with IMMICH_WORKERS_INCLUDE=api
+      microservices → runs immich-microservices with IMMICH_WORKERS_INCLUDE=microservices
+
+  ImmichVersion:
+    Type: String
+    Default: 'release'
+    Description: >
+      Tag of ghcr.io/immich-app/immich-server to pull.
+      Use 'release' for latest stable or pin to a version e.g. v2.7.5
+
+  # ── SSM Paths ──────────────────────────────────────────────────────────────
+  SSMDBConfPath:
+    Type: String
+    Default: '/immich/db/conf'
+    Description: >
+      SSM parameter path for DB config.
+      Expected format: db_host=x,db_pass=y,db_name=a
+
+  # ── S3 Files Mount ─────────────────────────────────────────────────────────
+  S3FilesystemId:
+    Type: String
+    Description: >
+      S3 Files filesystem ID (fs-xxxxxxxx) to mount at /mnt/immich.
+      Both API and microservices containers bind-mount this path as the
+      upload location.
+
+  # ── Access ─────────────────────────────────────────────────────────────────
+  AllowedCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR allowed SSH access. Use your VPC CIDR.
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  CacheHost:
+    Type: String
+    Description: Hostname for the cache
+
+
+Conditions:
+  IsAPI:       !Equals [!Ref WorkerMode, 'api']
+
+Resources:
+
+  # ── Security Group ────────────────────────────────────────────────────────
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Immich ${WorkerMode} EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCIDR
+          Description: SSH access
+        # API port — only needed for api worker mode, harmless on microservices
+        - IpProtocol: tcp
+          FromPort: 2283
+          ToPort: 2283
+          CidrIp: !Ref AllowedCIDR
+          Description: Immich API port (ALB target)
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub immich-${WorkerMode}-sg-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Allow this instance to reach ElastiCache ──────────────────────────────
+  CacheIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref CacheSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      Description: !Sub Valkey access from immich-${WorkerMode}-${Environment}
+
+  # ── Allow this instance to reach S3 Files mount targets ───────────────────
+  S3FilesIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref S3FilesSGId
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      Description: !Sub NFS access from immich-${WorkerMode}-${Environment}
+
+  # ── IAM Role ──────────────────────────────────────────────────────────────
+  AppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub immich-${WorkerMode}-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadImmichSSMConf
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SSMDBConfPath}
+        - PolicyName: MountS3Files
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${S3FilesystemId}
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref AppInstanceRole
+
+  # ── EC2 Instance ──────────────────────────────────────────────────────────
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}'
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+      IamInstanceProfile: !Ref AppInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee /var/log/immich-app-init.log | logger -t immich-app-init) 2>&1
+
+          echo "=== Immich ${WorkerMode} Init: $(date) ==="
+
+          # ── 1. Install EFS mount helper ────────────────────────────────────
+          # amazon-efs-utils ships on ECS-optimized AMI but ensure it's present
+          if ! command -v mount.efs &> /dev/null; then
+            echo "Installing amazon-efs-utils..."
+            dnf install -y amazon-efs-utils
+          fi
+
+          # ── 2. Mount S3 Files filesystem ───────────────────────────────────
+          mkdir -p /mnt/immich
+          # Check if already mounted (idempotent on re-runs)
+          if ! mountpoint -q /mnt/immich; then
+            echo "Mounting S3 Files filesystem ${S3FilesystemId}..."
+            mount -t efs -o tls ${S3FilesystemId}:/ /mnt/immich
+          fi
+
+          # Persist mount across reboots — _netdev ensures network is up first
+          if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+            echo "${S3FilesystemId}:/ /mnt/immich efs _netdev,tls 0 0" >> /etc/fstab
+          fi
+
+          mkdir -p /mnt/immich/upload
+
+          # ── 3. Fetch and parse DB config from SSM ─────────────────────────
+          echo "Fetching DB config from SSM ${SSMDBConfPath}..."
+          DB_RAW=$(aws ssm get-parameter \
+            --name "${SSMDBConfPath}" \
+            --with-decryption \
+            --region ${AWS::Region} \
+            --query "Parameter.Value" \
+            --output text)
+
+          DB_HOST=$(echo "$DB_RAW" | tr ',' '\n' | grep '^db_host=' | cut -d= -f2)
+          DB_PASS=$(echo "$DB_RAW" | tr ',' '\n' | grep '^db_pass=' | cut -d= -f2)
+          DB_NAME=$(echo "$DB_RAW" | tr ',' '\n' | grep '^db_name=' | cut -d= -f2)
+
+          if [ -z "$DB_HOST" ] || [ -z "$DB_PASS" ] || [ -z "$DB_NAME" ]; then
+            echo "ERROR: Failed to parse DB config. Expected: db_host=x,db_pass=y,db_name=a"
+            exit 1
+          fi
+          echo "DB config parsed — host=$DB_HOST db=$DB_NAME"
+
+
+          # ── 5. Pull Immich image ───────────────────────────────────────────
+          IMMICH_IMAGE="ghcr.io/immich-app/immich-server:${ImmichVersion}"
+          echo "Pulling $IMMICH_IMAGE..."
+          docker pull "$IMMICH_IMAGE"
+
+          # ── 6. Write env file (avoids secrets in process list / docker inspect) ──
+          mkdir -p /opt/immich
+          cat > /opt/immich/app.env << EOF
+          DB_HOSTNAME="$DB_HOST"
+          DB_PASSWORD="$DB_PASS"
+          DB_PORT=5432
+          DB_DATABASE_NAME="$DB_NAME"
+          DB_USERNAME=postgres
+          REDIS_HOSTNAME=${CacheHost}
+          REDIS_PORT=6379
+          UPLOAD_LOCATION=/usr/src/app/upload
+          IMMICH_WORKERS_INCLUDE=${WorkerMode}
+          NODE_ENV=production
+          EOF
+          chmod 600 /opt/immich/app.env
+
+          # ── 7. Create systemd service ──────────────────────────────────────
+          cat > /etc/systemd/system/immich-app.service << SERVICE
+          [Unit]
+          Description=Immich ${WorkerMode}
+          Requires=docker.service
+          After=docker.service network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/bin/docker run -d \
+            --name immich_${WorkerMode} \
+            --restart unless-stopped \
+            --env-file /opt/immich/app.env \
+            --volume /mnt/immich/upload:/usr/src/app/upload \
+            --publish 2283:2283 \
+            ghcr.io/immich-app/immich-server:${ImmichVersion}
+          ExecStop=/usr/bin/docker stop immich_${WorkerMode}
+          ExecStopPost=/usr/bin/docker rm -f immich_${WorkerMode}
+          TimeoutStartSec=120
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable immich-app.service
+          systemctl start immich-app.service
+
+          echo "=== Immich ${WorkerMode} Init complete: $(date) ==="
+
+      Tags:
+        - Key: Name
+          Value: !Sub immich-${WorkerMode}-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: WorkerMode
+          Value: !Ref WorkerMode
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref AppInstance
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceId
+
+  PrivateIP:
+    Description: Private IP of the instance
+    Value: !GetAtt AppInstance.PrivateIp
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateIP
+
+  AppSecurityGroupId:
+    Description: Security group of this app instance — reference in other stacks
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-AppSecurityGroupId

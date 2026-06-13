@@ -1,0 +1,57 @@
+# ── App Stack: API ────────────────────────────────────────────────────────────
+[api.deploy.parameters]
+stack_name        = "immich-api-prod"
+template_file     = "immich-app-ec2.yaml"
+region            = "us-east-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+parameter_overrides = [
+  "VpcId=vpc-0ba8dc166b641aa2b",
+  "SubnetId=subnet-05827c47b9a6e2a13",  
+  "CacheSecurityGroupId=sg-REPLACE_ME",       # from immich-cache-prod stack output
+  "InstanceType=t4g.micro",
+  "WorkerMode=api",
+  "ImmichVersion=release",
+  "SSMDBConfPath=/immich/db/conf",
+  "SSMCacheConfPath=/immich/cache/conf",
+  "S3FilesystemId=fs-REPLACE_ME",
+  "AllowedCIDR=10.0.0.0/16",
+  "Environment=prod"
+]
+
+tags = [
+  "Project=immich",
+  "Environment=prod",
+  "ManagedBy=sam"
+]
+
+# ── App Stack: Microservices ──────────────────────────────────────────────────
+[microservices.deploy.parameters]
+stack_name        = "immich-microservices-prod"
+template_file     = "immich-app-ec2.yaml"
+region            = "us-east-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+parameter_overrides = [
+  "VpcId=vpc-0ba8dc166b641aa2b",
+  "SubnetId=subnet-05827c47b9a6e2a13",  
+  "CacheSecurityGroupId=sg-REPLACE_ME",       # from immich-cache-prod stack output
+  "InstanceType=t4g.micro",
+  "WorkerMode=microservices",
+  "ImmichVersion=release",
+  "SSMDBConfPath=/immich/db/conf",
+  "SSMCacheConfPath=/immich/cache/conf",
+  "S3FilesystemId=fs-REPLACE_ME",
+  "AllowedCIDR=10.0.0.0/16",
+  "Environment=prod"
+]
+
+tags = [
+  "Project=immich",
+  "Environment=prod",
+  "ManagedBy=sam"
+]

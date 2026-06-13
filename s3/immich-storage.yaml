@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich Storage - S3 bucket with Intelligent-Tiering lifecycle policy,
+  an IAM role for S3 Files access, and an S3 Files filesystem with mount
+  targets in each provided subnet. The FilesystemId output is what you
+  pass as S3FilesystemId in the app EC2 stack.
+
+Parameters:
+
+  # ── Networking ─────────────────────────────────────────────────────────────
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the S3 Files mount targets will be created.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >
+      Subnets for S3 Files mount targets — one per AZ where your app EC2s run.
+      Provide exactly 2 subnets (one per AZ). Each gets its own mount target.
+
+  # ── Bucket ─────────────────────────────────────────────────────────────────
+  BucketName:
+    Type: String
+    Description: >
+      Globally unique S3 bucket name e.g. immich-media-yourname-prod.
+      Lowercase, 3-63 chars, no underscores.
+
+  # ── Lifecycle ──────────────────────────────────────────────────────────────
+  IntelligentTieringDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    Description: >
+      Days after which original photos/videos transition to Intelligent-Tiering.
+      Objects under 128KB are excluded to avoid minimum size charges.
+
+  # ── General ────────────────────────────────────────────────────────────────
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+
+  # ── S3 Bucket ──────────────────────────────────────────────────────────────
+  ImmichBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${BucketName}-${AWS::Region}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Transition original assets (large files) to Intelligent-Tiering
+          # Scope to upload/library/ only — thumbnails stay in Standard
+          - Id: IntelligentTieringOriginals
+            Status: Enabled
+            Prefix: upload/library/
+            Transitions:
+              - TransitionInDays: !Ref IntelligentTieringDays
+                StorageClass: INTELLIGENT_TIERING
+          # Clean up failed multipart uploads automatically
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 3
+      Tags:
+        - Key: Name
+          Value: !Sub immich-media-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ── IAM Role for S3 Files ──────────────────────────────────────────────────
+  # S3 Files requires an IAM role to access the bucket on behalf of the filesystem.
+  S3FilesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub immich-s3files-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticfilesystem.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3FilesAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                  - kms:GenerateDataKey
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncryptFrom
+                  - kms:ReEncryptTo
+                Resource:
+                  - !GetAtt ImmichBucket.Arn
+                  - !Sub ${ImmichBucket.Arn}/*
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── S3 Files Security Group ────────────────────────────────────────────────
+  S3FilesSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Immich S3 Files - NFS ingress managed by app EC2 stacks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress: []   # Ingress rules injected by app EC2 stacks
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub immich-s3files-sg-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── S3 Files Filesystem ────────────────────────────────────────────────────
+  ImmichFilesystem:
+    Type: AWS::S3Files::FileSystem
+    DependsOn: ImmichBucket
+    Properties:
+      Bucket: !GetAtt ImmichBucket.Arn   # Must be ARN not bucket name
+      RoleArn: !GetAtt S3FilesRole.Arn
+      AcceptBucketWarning: true           # Required acknowledgement
+      Tags:
+        - Key: Name
+          Value: !Sub immich-fs-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ── Mount Target AZ 1 ─────────────────────────────────────────────────────
+  MountTarget0:
+    Type: AWS::S3Files::MountTarget
+    Properties:
+      FileSystemId: !Ref ImmichFilesystem
+      SubnetId: !Select [0, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref S3FilesSG
+
+  # ── Mount Target AZ 2 ─────────────────────────────────────────────────────
+  MountTarget1:
+    Type: AWS::S3Files::MountTarget
+    Properties:
+      FileSystemId: !Ref ImmichFilesystem
+      SubnetId: !Select [1, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref S3FilesSG
+
+Outputs:
+
+  BucketName:
+    Description: S3 bucket name
+    Value: !Ref ImmichBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-BucketName
+
+  BucketArn:
+    Description: S3 bucket ARN
+    Value: !GetAtt ImmichBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-BucketArn
+
+  FilesystemId:
+    Description: >
+      S3 Files filesystem ID — pass this as S3FilesystemId in the app EC2 stack.
+    Value: !Ref ImmichFilesystem
+    Export:
+      Name: !Sub ${AWS::StackName}-FilesystemId
+
+  S3FilesSGId:
+    Description: S3 Files mount target security group ID
+    Value: !Ref S3FilesSG
+    Export:
+      Name: !Sub ${AWS::StackName}-S3FilesSGId
+
+  S3FilesRoleArn:
+    Description: IAM role ARN used by S3 Files to access the bucket
+    Value: !GetAtt S3FilesRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-S3FilesRoleArn

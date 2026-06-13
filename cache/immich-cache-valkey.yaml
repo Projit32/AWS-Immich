@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich Cache - ElastiCache node-based Valkey cluster (single t4g.micro node).
+  Includes a custom parameter group with maxmemory-policy=noeviction required
+  for BullMQ compatibility. Ingress rules are managed in the app/microservices
+  EC2 templates via the exported CacheSecurityGroupId. Deploy after VPC stack.
+
+Parameters:
+
+  # ── Networking ─────────────────────────────────────────────────────────────
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy the ElastiCache cluster into.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >
+      At least two subnets in different AZs for the subnet group.
+      The cluster itself uses one node but AWS requires multi-AZ subnet groups.
+
+  # ── Cache ──────────────────────────────────────────────────────────────────
+  NodeType:
+    Type: String
+    Default: cache.t4g.micro
+    AllowedValues:
+      - cache.t4g.micro
+      - cache.t4g.small
+      - cache.t4g.medium
+    Description: >
+      cache.t4g.micro is sufficient for Immich at 10 users.
+      Upgrade to t4g.small if you add ML or scale to many workers.
+
+  # ── General ────────────────────────────────────────────────────────────────
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+
+  # ── Security Group ────────────────────────────────────────────────────────
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Immich Cache - ingress managed by app EC2 stacks
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub immich-cache-sg-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Subnet Group ──────────────────────────────────────────────────────────
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub immich-cache-subnet-${Environment}
+      Description: Subnet group for Immich Valkey cache
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Parameter Group ───────────────────────────────────────────────────────
+  # maxmemory-policy MUST be noeviction for BullMQ.
+  # Default ElastiCache policy evicts keys under memory pressure which
+  # silently drops BullMQ job queue data causing jobs to disappear.
+  CacheParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: valkey9
+      Description: Immich Valkey 9.0 - BullMQ compatible
+      Properties:
+        maxmemory-policy: noeviction
+        # Disable active defrag on small nodes — more overhead than benefit
+        activedefrag: 'no'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── ElastiCache Cluster ───────────────────────────────────────────────────
+  ValkeyCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Sub immich-cache-${Environment}
+      ReplicationGroupDescription: 'Node-based Valkey 9 engine replication group for BullMQ processing'
+      Engine: valkey
+      EngineVersion: '9.0'
+      CacheNodeType: !Ref NodeType
+      CacheParameterGroupName: !Ref CacheParameterGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      SecurityGroupIds:
+        - !GetAtt CacheSecurityGroup.GroupId
+      AutomaticFailoverEnabled: false
+      MultiAZEnabled: false
+      NumCacheClusters: 1
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub immich-cache-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+
+  CacheEndpoint:
+    Description: >
+      Valkey endpoint — use as REDIS_HOSTNAME in Immich env vars.
+    Value: !GetAtt ValkeyCluster.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-CacheEndpoint
+
+  CachePort:
+    Description: Valkey port (always 6379)
+    Value: !GetAtt ValkeyCluster.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-CachePort
+
+  CacheSecurityGroupId:
+    Description: >
+      Cache security group ID — add this to your app EC2 egress if needed.
+    Value: !Ref CacheSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-CacheSecurityGroupId

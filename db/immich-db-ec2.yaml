@@ -216,30 +216,17 @@ Resources:
 
           echo "Parsed credentials — user=$DB_USER, db=$DB_NAME"
 
-          # ── 5. Build Immich Postgres image ──────────────────────────────────
-          echo "Building docker file"
+          # ── 5. Pull Immich Postgres image ──────────────────────────────────
+          echo "Pulling docker file"
           
-          mkdir -p /opt/immich-db
-
-          # Make Dockerfile
-          cat > /opt/immich-db/Dockerfile <<EOF
-          FROM ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
-          
-          ENV POSTGRES_USER="$DB_USER"
-          ENV POSTGRES_PASSWORD="$DB_PASS"
-          ENV POSTGRES_DB="$DB_NAME"
-          
-          EXPOSE 5432
-          EOF
-          
-          docker build -t immich-postgres /opt/immich-db
+          docker pull ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
 
           # ── 6. create docker file ────────────────────────────────────────
           
           
           
           # ── 7. Systemd service for lifecycle management ────────────────────
-          cat > /etc/systemd/system/immich-db.service << 'SERVICE'
+          cat > /etc/systemd/system/immich-db.service << EOF
           [Unit]
           Description=Immich Postgres Database
           Requires=docker.service
@@ -249,20 +236,22 @@ Resources:
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          WorkingDirectory=/opt/immich-db
           ExecStart=/usr/bin/docker run \
               --name immich-postgres \
               --restart=no \
               -p 5432:5432 \
+              -e POSTGRES_USER="$DB_USER" \
+              -e POSTGRES_PASSWORD="$DB_PASS" \
+              -e POSTGRES_DB="$DB_NAME" \
               -v /data/postgres/data:/var/lib/postgresql/data \
-              immich-postgres
+              ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
           
           ExecStop=/usr/bin/docker stop -t 30 immich-postgres
           ExecStopPost=-/usr/bin/docker rm -f immich-postgres
 
           [Install]
           WantedBy=multi-user.target
-          SERVICE
+          EOF
 
           systemctl daemon-reload
           systemctl enable immich-db.service
