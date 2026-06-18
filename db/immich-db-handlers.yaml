@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: Immich PostgreSQL Spot Failover Controller
+
+Parameters:
+
+  SpotLaunchTemplateId:
+    Type: String
+
+  OnDemandLaunchTemplateId:
+    Type: String
+
+  VolumeId:
+    Type: String
+
+  HostedZoneId:
+    Type: String
+
+  RecordName:
+    Type: String
+    Default: db.proapplication.internal
+
+  StateParameterName:
+    Type: String
+    Default: /immich/conf/db/state
+
+Globals:
+
+  Function:
+    Runtime: python3.12
+    Timeout: 900
+    MemorySize: 256
+    Architectures:
+      - arm64
+
+Resources:
+
+  #########################################################
+  # IAM Role
+  #########################################################
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+
+        - PolicyName: ec2-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:TerminateInstances
+                  - ec2:AttachVolume
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstanceStatus
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeLaunchTemplates
+                  - ec2:DescribeLaunchTemplateVersions
+                Resource: "*"
+
+        - PolicyName: route53-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                Resource: "*"
+
+        - PolicyName: ssm-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: "*"
+
+        - PolicyName: eventbridge-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:EnableRule
+                  - events:DisableRule
+                Resource: "*"
+
+  #########################################################
+  # Restore Schedule
+  #########################################################
+
+  RestoreScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+
+      Name: immich-db-restore
+
+      Description: Retry Spot restoration every 30 minutes
+
+      ScheduleExpression: rate(30 minutes)
+
+      State: DISABLED
+
+      Targets:
+        - Arn: !GetAtt RestoreFunction.Arn
+          Id: RestoreFunction
+
+  #########################################################
+  # Spot Interruption Rule
+  #########################################################
+
+  SpotInterruptionRule:
+    Type: AWS::Events::Rule
+    Properties:
+
+      Name: immich-db-spot-interruption
+
+      EventPattern:
+
+        source:
+          - aws.ec2
+
+        detail-type:
+          - EC2 Spot Instance Interruption Warning
+
+      Targets:
+        - Arn: !GetAtt FailoverFunction.Arn
+          Id: FailoverFunction
+
+  #########################################################
+  # Failover Lambda
+  #########################################################
+
+  FailoverFunction:
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName: immich-db-failover
+
+      CodeUri: handlers/
+
+      Handler: failover_handler.lambda_handler
+
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Environment:
+
+        Variables:
+
+          VOLUME_ID: !Ref VolumeId
+
+          HOSTED_ZONE_ID: !Ref HostedZoneId
+
+          RECORD_NAME: !Ref RecordName
+
+          STATE_PARAMETER: !Ref StateParameterName
+
+          OD_LAUNCH_TEMPLATE_ID: !Ref OnDemandLaunchTemplateId
+
+          SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
+
+          RESTORE_RULE_NAME: !Ref RestoreScheduleRule
+
+  #########################################################
+  # Restore Lambda
+  #########################################################
+
+  RestoreFunction:
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName: immich-db-restore
+
+      CodeUri: handlers/
+
+      Handler: recovery_handler.lambda_handler
+
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Environment:
+
+        Variables:
+
+          VOLUME_ID: !Ref VolumeId
+
+          HOSTED_ZONE_ID: !Ref HostedZoneId
+
+          RECORD_NAME: !Ref RecordName
+
+          STATE_PARAMETER: !Ref StateParameterName
+
+          SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
+
+          OD_LAUNCH_TEMPLATE_ID: !Ref OnDemandLaunchTemplateId
+
+          RESTORE_RULE_NAME: !Ref RestoreScheduleRule
+
+  #########################################################
+  # EventBridge Permissions
+  #########################################################
+
+  FailoverPermission:
+    Type: AWS::Lambda::Permission
+
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FailoverFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SpotInterruptionRule.Arn
+
+  RestorePermission:
+    Type: AWS::Lambda::Permission
+
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RestoreFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RestoreScheduleRule.Arn
+
+Outputs:
+
+  FailoverFunctionArn:
+    Value: !GetAtt FailoverFunction.Arn
+
+  RestoreFunctionArn:
+    Value: !GetAtt RestoreFunction.Arn
+
+  RestoreRuleName:
+    Value: !Ref RestoreScheduleRule
+
+  SpotInterruptionRuleArn:
+    Value: !GetAtt SpotInterruptionRule.Arn

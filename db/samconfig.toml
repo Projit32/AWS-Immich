@@ -33,7 +33,7 @@ tags = [
   "ManagedBy=sam"
 ]
 
-# ── EC2 Stack ─────────────────────────────────────────────────────────────────
+# ── EC2 Template Stack ─────────────────────────────────────────────────────────────────
 [ec2.deploy.parameters]
 stack_name        = "immich-db-ec2-prod"
 template_file     = "immich-db-ec2.yaml"
@@ -44,8 +44,6 @@ fail_on_empty_changeset = false
 
 parameter_overrides = [
   "VpcId=vpc-0ba8dc166b641aa2b",
-  "SubnetId=subnet-05827c47b9a6e2a13",            # Must be in ap-south-1a to match EBS AZ
-  "EBSVolumeId=vol-08d729b8ef198c0b1",            # From immich-db-ebs-prod stack output: VolumeId
   "InstanceType=t4g.small",
   "ImmichPostgresVersion=14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
   "AllowedCIDR=0.0.0.0/0",              # Tighten this to your actual VPC CIDR
@@ -53,6 +51,7 @@ parameter_overrides = [
   "CredentialSSMName=/immich/conf/db"
 ]
 
+# Tags applied to all resources in the stack
 tags = [
   "Project=immich",
   "Environment=prod",
