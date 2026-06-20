@@ -18,6 +18,8 @@ RECORD_NAME = os.environ["RECORD_NAME"]
 STATE_PARAMETER = os.environ["STATE_PARAMETER"]
 RESTORE_RULE_NAME = os.environ["RESTORE_RULE_NAME"]
 
+SUBNET_ID = os.environ["SUBNET_ID"]
+
 INSTANCE_STATUS_TIMEOUT = 600
 VOLUME_TIMEOUT = 600
 
@@ -87,15 +89,15 @@ def lambda_handler(event, context):
         spot_instance_id
     )
 
-    private_ip = get_private_ip(
+    public_ip = get_ip(
         spot_instance_id
     )
 
     update_dns(
-        private_ip
+        public_ip
     )
 
-    disable_restore_rule()
+    # disable_restore_rule()
 
     update_state(
         state="SPOT_ACTIVE",
@@ -107,7 +109,7 @@ def lambda_handler(event, context):
     return {
         "status": "success",
         "instanceId": spot_instance_id,
-        "privateIp": private_ip
+        "publicIp": public_ip
     }
 
 
@@ -144,6 +146,7 @@ def launch_spot_instance():
         LaunchTemplate={
             "LaunchTemplateId": SPOT_LAUNCH_TEMPLATE_ID
         },
+        SubnetId=SUBNET_ID,
         MinCount=1,
         MaxCount=1
     )
@@ -256,7 +259,7 @@ def attach_volume(instance_id, volume_id):
     ec2.attach_volume(
         VolumeId=volume_id,
         InstanceId=instance_id,
-        Device="/dev/sdf"
+        Device="/dev/xvdbb"
     )
 
     wait_for_volume_in_use(
@@ -337,7 +340,7 @@ def wait_for_instance_status_ok(instance_id):
         time.sleep(10)
 
 
-def get_private_ip(instance_id):
+def get_ip(instance_id):
 
     response = ec2.describe_instances(
         InstanceIds=[instance_id]
@@ -346,7 +349,7 @@ def get_private_ip(instance_id):
     return (
         response["Reservations"][0]
         ["Instances"][0]
-        ["PrivateIpAddress"]
+        ["PublicIpAddress"]
     )
 
 

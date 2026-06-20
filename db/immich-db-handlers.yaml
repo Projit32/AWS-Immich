@@ -19,18 +19,21 @@ Parameters:
 
   RecordName:
     Type: String
-    Default: db.proapplication.internal
 
   StateParameterName:
     Type: String
-    Default: /immich/conf/db/state
+    Default: /immich/db/state
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for the EC2 instance.
 
 Globals:
 
   Function:
     Runtime: python3.12
     Timeout: 900
-    MemorySize: 256
+    MemorySize: 128
     Architectures:
       - arm64
 
@@ -126,7 +129,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
 
-      Name: immich-db-restore
+      Name: immich-db-restore-rule
 
       Description: Retry Spot restoration every 30 minutes
 
@@ -146,7 +149,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
 
-      Name: immich-db-spot-interruption
+      Name: immich-db-spot-interruption-rule
 
       EventPattern:
 
@@ -171,7 +174,7 @@ Resources:
 
       FunctionName: immich-db-failover
 
-      CodeUri: handlers/
+      CodeUri: ./handlers/
 
       Handler: failover_handler.lambda_handler
 
@@ -193,8 +196,15 @@ Resources:
 
           SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
 
-          RESTORE_RULE_NAME: !Ref RestoreScheduleRule
+          RESTORE_RULE_NAME: immich-db-restore-rule
 
+          SUBNET_ID: !Ref SubnetId
+
+  FailoverLambdaCloudwatchLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: /aws/lambda/immich-db-failover
+      RetentionInDays: 7
   #########################################################
   # Restore Lambda
   #########################################################
@@ -206,7 +216,7 @@ Resources:
 
       FunctionName: immich-db-restore
 
-      CodeUri: handlers/
+      CodeUri: ./handlers/
 
       Handler: recovery_handler.lambda_handler
 
@@ -228,8 +238,15 @@ Resources:
 
           OD_LAUNCH_TEMPLATE_ID: !Ref OnDemandLaunchTemplateId
 
-          RESTORE_RULE_NAME: !Ref RestoreScheduleRule
+          RESTORE_RULE_NAME: immich-db-restore-rule
 
+          SUBNET_ID: !Ref SubnetId
+
+  RecoveryLambdaCloudwatchLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: /aws/lambda/immich-db-restore
+      RetentionInDays: 7
   #########################################################
   # EventBridge Permissions
   #########################################################

@@ -18,6 +18,9 @@ RECORD_NAME = os.environ["RECORD_NAME"]
 STATE_PARAMETER = os.environ["STATE_PARAMETER"]
 RESTORE_RULE_NAME = os.environ["RESTORE_RULE_NAME"]
 
+SUBNET_ID = os.environ["SUBNET_ID"]
+SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
+
 INSTANCE_STATUS_TIMEOUT = 600
 VOLUME_TIMEOUT = 120
 
@@ -72,9 +75,9 @@ def lambda_handler(event, context):
     #
     wait_for_instance_status_ok(od_instance_id)
 
-    private_ip = get_private_ip(od_instance_id)
+    public_ip = get_ip(od_instance_id)
 
-    update_dns(private_ip)
+    update_dns(public_ip)
 
     enable_restore_rule()
 
@@ -88,7 +91,7 @@ def lambda_handler(event, context):
     return {
         "status": "success",
         "instanceId": od_instance_id,
-        "privateIp": private_ip
+        "publicIp": public_ip
     }
 
 
@@ -134,6 +137,7 @@ def launch_ondemand_instance():
         LaunchTemplate={
             "LaunchTemplateId": OD_LAUNCH_TEMPLATE_ID
         },
+        SubnetId=SUBNET_ID,
         MinCount=1,
         MaxCount=1
     )
@@ -221,7 +225,7 @@ def attach_volume(instance_id, volume_id):
     ec2.attach_volume(
         VolumeId=volume_id,
         InstanceId=instance_id,
-        Device="/dev/sdf"
+        Device="/dev/xvdbb"
     )
 
     wait_for_volume_in_use(volume_id)
@@ -287,7 +291,7 @@ def wait_for_instance_status_ok(instance_id):
         time.sleep(10)
 
 
-def get_private_ip(instance_id):
+def get_ip(instance_id):
 
     response = ec2.describe_instances(
         InstanceIds=[instance_id]
@@ -296,7 +300,7 @@ def get_private_ip(instance_id):
     return (
         response["Reservations"][0]
         ["Instances"][0]
-        ["PrivateIpAddress"]
+        ["PublicIpAddress"]
     )
 
 
@@ -345,4 +349,44 @@ def enable_restore_rule():
 
     print(
         "Restore rule enabled"
+    )
+
+def validate_spot_instance(instance_id):
+
+    response = ec2.describe_instances(
+        InstanceIds=[instance_id]
+    )
+
+    instance = (
+        response["Reservations"][0]
+        ["Instances"][0]
+    )
+
+    launch_template = instance.get(
+        "LaunchTemplate"
+    )
+
+    if not launch_template:
+        raise Exception(
+            f"{instance_id} was not launched from a launch template"
+        )
+
+    actual_lt_id = launch_template[
+        "LaunchTemplateId"
+    ]
+
+    if actual_lt_id != SPOT_LAUNCH_TEMPLATE_ID:
+
+        print(
+            f"Ignoring interruption event. "
+            f"Expected LT={SPOT_LAUNCH_TEMPLATE_ID}, "
+            f"Actual LT={actual_lt_id}"
+        )
+
+        raise Exception(
+            "Not the database spot instance"
+        )
+
+    print(
+        f"Validated DB spot instance {instance_id}"
     )
