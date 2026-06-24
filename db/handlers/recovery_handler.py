@@ -89,15 +89,15 @@ def lambda_handler(event, context):
         spot_instance_id
     )
 
-    public_ip = get_ip(
+    private_ip = get_ip(
         spot_instance_id
     )
 
     update_dns(
-        public_ip
+        private_ip
     )
 
-    # disable_restore_rule()
+    disable_restore_rule()
 
     update_state(
         state="SPOT_ACTIVE",
@@ -109,7 +109,7 @@ def lambda_handler(event, context):
     return {
         "status": "success",
         "instanceId": spot_instance_id,
-        "publicIp": public_ip
+        "publicIp": private_ip
     }
 
 

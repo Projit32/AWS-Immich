@@ -68,6 +68,10 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: "*"
 
               - Effect: Allow
                 Action:
@@ -77,6 +81,7 @@ Resources:
                   - ec2:DescribeInstances
                   - ec2:DescribeVolumes
                   - ec2:DescribeInstanceStatus
+                  - ec2:CreateTags
                 Resource: "*"
 
               - Effect: Allow

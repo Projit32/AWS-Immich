@@ -1,0 +1,309 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Immich ECS Production V2 - API and Worker Spot Capacity Providers
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  S3FilesystemId:
+    Type: String
+
+  EnvFileS3Arn:
+    Type: String
+
+Resources:
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: immich-cluster
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/immich-api
+      RetentionInDays: 5
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/immich-microservices
+      RetentionInDays: 5
+
+  HostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Immich ECS Hosts
+      VpcId: !Ref VpcId
+
+  ApiIngress2283:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref HostSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2283
+      ToPort: 2283
+      CidrIp: 0.0.0.0/0
+
+  ECSInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  ECSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ECSInstanceRole
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: EnvFileRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: "*"
+
+  ApiLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt ECSInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref HostSecurityGroup
+        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            mkdir -p /mnt/immich
+            if ! mountpoint -q /mnt/immich; then
+              mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+            fi
+            if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+              echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+            fi
+
+  WorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt ECSInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref HostSecurityGroup
+        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            mkdir -p /mnt/immich
+            if ! mountpoint -q /mnt/immich; then
+              mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+            fi
+            if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+              echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+            fi
+
+  ApiASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: "0"
+      MaxSize: "1"
+      DesiredCapacity: "0"
+      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotAllocationStrategy: price-capacity-optimized
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref ApiLaunchTemplate
+            Version: !GetAtt ApiLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: t4g.small
+            - InstanceType: t4g.medium
+
+  WorkerASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: "0"
+      MaxSize: "1"
+      DesiredCapacity: "0"
+      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotAllocationStrategy: price-capacity-optimized
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref WorkerLaunchTemplate
+            Version: !GetAtt WorkerLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: t4g.xlarge
+            - InstanceType: c6g.xlarge
+            - InstanceType: c7g.xlarge
+            - InstanceType: c8g.xlarge
+
+  ApiCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref ApiASG
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+
+  WorkerCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref WorkerASG
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+
+  ClusterCapacityProviders:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref ECSCluster
+      CapacityProviders:
+        - !Ref ApiCapacityProvider
+        - !Ref WorkerCapacityProvider
+
+  ApiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: immich-api
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      Volumes:
+        - Name: uploads
+          Host:
+            SourcePath: /mnt/immich
+      ContainerDefinitions:
+        - Name: immich-api
+          Image: ghcr.io/immich-app/immich-server:release
+          Essential: true
+          EnvironmentFiles:
+            - Type: s3
+              Value: !Ref EnvFileS3Arn
+          Environment:
+            - Name: IMMICH_WORKERS_INCLUDE
+              Value: api
+          PortMappings:
+            - ContainerPort: 2283
+              HostPort: 2283
+          MountPoints:
+            - SourceVolume: uploads
+              ContainerPath: /usr/src/app/upload
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/immich-api
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: immich-microservices
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [EC2]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      Volumes:
+        - Name: uploads
+          Host:
+            SourcePath: /mnt/immich
+      ContainerDefinitions:
+        - Name: immich-microservices
+          Image: ghcr.io/immich-app/immich-server:release
+          Essential: true
+          EnvironmentFiles:
+            - Type: s3
+              Value: !Ref EnvFileS3Arn
+          Environment:
+            - Name: IMMICH_WORKERS_EXCLUDE
+              Value: api
+          MountPoints:
+            - SourceVolume: uploads
+              ContainerPath: /usr/src/app/upload
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/immich-microservices
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ClusterCapacityProviders
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: 1
+      CapacityProviderStrategy:
+        - CapacityProvider: !Ref ApiCapacityProvider
+          Weight: 1
+      TaskDefinition: !Ref ApiTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref HostSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ClusterCapacityProviders
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: 0
+      CapacityProviderStrategy:
+        - CapacityProvider: !Ref WorkerCapacityProvider
+          Weight: 1
+      TaskDefinition: !Ref WorkerTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref HostSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+
+Outputs:
+  ClusterName:
+    Value: !Ref ECSCluster

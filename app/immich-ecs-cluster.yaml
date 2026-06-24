@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Immich ECS Spot Cluster Skeleton
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  S3FilesystemId:
+    Type: String
+  EnvFileS3Arn:
+    Type: String
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: immich-cluster
+
+Outputs:
+  ClusterName:
+    Value: !Ref ECSCluster

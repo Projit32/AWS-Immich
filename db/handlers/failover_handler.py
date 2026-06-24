@@ -75,9 +75,9 @@ def lambda_handler(event, context):
     #
     wait_for_instance_status_ok(od_instance_id)
 
-    public_ip = get_ip(od_instance_id)
+    private_ip = get_ip(od_instance_id)
 
-    update_dns(public_ip)
+    update_dns(private_ip)
 
     enable_restore_rule()
 
@@ -91,7 +91,7 @@ def lambda_handler(event, context):
     return {
         "status": "success",
         "instanceId": od_instance_id,
-        "publicIp": public_ip
+        "publicIp": private_ip
     }
 
 
@@ -300,7 +300,7 @@ def get_ip(instance_id):
     return (
         response["Reservations"][0]
         ["Instances"][0]
-        ["PublicIpAddress"]
+        ["PrivateIpAddress"]
     )
 
 

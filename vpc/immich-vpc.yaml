@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: VPC for account
+
+Parameters:
+  VPCName:
+    Type: String
+    Description: Name of the VPC
+
+  VPCRegion:
+    Type: String
+    Description: Name of the VPC Region
+
+  HostedZoneName:
+    Type: String
+    Description: Name of the private hosted zone
+
+  Subnet2Required:
+    Type: String
+    Description: 2nd Subnet required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  Subnet3Required:
+    Type: String
+    Description: 3rd Subnet required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  Subnet4Required:
+    Type: String
+    Description: 4th Subnet required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  Subnet5Required:
+    Type: String
+    Description: 5th Subnet required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  Subnet6Required:
+    Type: String
+    Description: 6th Subnet required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  NatGatewayRequired:
+    Type: String
+    Description: Nat Gateway Required
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+
+Conditions:
+  2ndSubnetRequired: !Equals ["true", !Ref Subnet2Required]
+  3rdSubnetRequired: !Equals ["true", !Ref Subnet3Required]
+  4thSubnetRequired: !Equals ["true", !Ref Subnet4Required]
+  5thSubnetRequired: !Equals ["true", !Ref Subnet5Required]
+  6thSubnetRequired: !Equals ["true", !Ref Subnet6Required]
+  NatGWNeeded: !Equals ["true", !Ref NatGatewayRequired]
+
+Resources:
+  ## VPC
+  PubPrivateVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key : Name
+          Value: !Sub ${VPCName}-VPC
+
+  ## SUBNETS
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}a
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: 2ndSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}b
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: 3rdSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}c
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet4:
+    Type: AWS::EC2::Subnet
+    Condition: 4thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}d
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet5:
+    Type: AWS::EC2::Subnet
+    Condition: 5thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}e
+      CidrBlock: 10.0.5.0/24
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet6:
+    Type: AWS::EC2::Subnet
+    Condition: 6thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}f
+      CidrBlock: 10.0.6.0/24
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}a
+      CidrBlock: 10.0.7.0/24
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: 2ndSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}b
+      CidrBlock: 10.0.8.0/24
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: 3rdSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}c
+      CidrBlock: 10.0.9.0/24
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet4:
+    Type: AWS::EC2::Subnet
+    Condition: 4thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}d
+      CidrBlock: 10.0.10.0/24
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet5:
+    Type: AWS::EC2::Subnet
+    Condition: 5thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}e
+      CidrBlock: 10.0.11.0/24
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet6:
+    Type: AWS::EC2::Subnet
+    Condition: 6thSubnetRequired
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AvailabilityZone: !Sub ${VPCRegion}f
+      CidrBlock: 10.0.12.0/24
+      MapPublicIpOnLaunch: false
+
+ ## INTERNET GATEWAY
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayToInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ## PUBLIC ROUTING
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${VPCName}-VPC-Public-Route
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 2ndSubnetRequired
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 3rdSubnetRequired
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet4RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 4thSubnetRequired
+    Properties:
+      SubnetId: !Ref PublicSubnet4
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet5RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 5thSubnetRequired
+    Properties:
+      SubnetId: !Ref PublicSubnet5
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet6RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 6thSubnetRequired
+    Properties:
+      SubnetId: !Ref PublicSubnet6
+      RouteTableId: !Ref PublicRouteTable
+
+  ## NAT GATEWAY
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatPublicIP
+    Condition: NatGWNeeded
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      AllocationId: !GetAtt NatPublicIP.AllocationId
+
+  ## ELASTIC IP
+  NatPublicIP:
+    Type: AWS::EC2::EIP
+    DependsOn: PubPrivateVPC
+    Condition: NatGWNeeded
+    Properties:
+      Domain: vpc
+
+  ## PRIVATE ROUTING
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${VPCName}-VPC-Private-Route
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: NatGWNeeded
+    Properties:
+      NatGatewayId: !Ref NatGateway
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 2ndSubnetRequired
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 3rdSubnetRequired
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet4RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 4thSubnetRequired
+    Properties:
+      SubnetId: !Ref PrivateSubnet4
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet5RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 5thSubnetRequired
+    Properties:
+      SubnetId: !Ref PrivateSubnet5
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet6RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: 6thSubnetRequired
+    Properties:
+      SubnetId: !Ref PrivateSubnet6
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      HostedZoneConfig:
+        Comment: "Private hosted zone for internal microservices"
+      VPCs:
+        - VPCId: !Ref PubPrivateVPC
+          VPCRegion: !Ref AWS::Region
