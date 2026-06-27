@@ -1,3 +1,5 @@
+version = 0.1
+
 # ── App Stack: API ────────────────────────────────────────────────────────────
 [api.deploy.parameters]
 stack_name        = "immich-api-prod"
@@ -10,14 +12,11 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "VpcId=vpc-0ba8dc166b641aa2b",
   "SubnetId=subnet-05827c47b9a6e2a13",  
-  "CacheSecurityGroupId=sg-REPLACE_ME",       # from immich-cache-prod stack output
-  "InstanceType=t4g.micro",
-  "WorkerMode=api",
-  "ImmichVersion=release",
-  "SSMDBConfPath=/immich/db/conf",
-  "SSMCacheConfPath=/immich/cache/conf",
-  "S3FilesystemId=fs-REPLACE_ME",
-  "AllowedCIDR=10.0.0.0/16",
+  "InstanceType=t4g.medium",
+  "S3FilesystemId=fs-094e7716463d37e8f",
+  "S3FilesSGId=sg-07051e7ea1ac70a0f",
+  "AllowedCIDR=0.0.0.0/0",
+  "BucketName=immich-media-prod-us-east-1-704678691702",
   "Environment=prod"
 ]
 
@@ -39,14 +38,11 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "VpcId=vpc-0ba8dc166b641aa2b",
   "SubnetId=subnet-05827c47b9a6e2a13",  
-  "CacheSecurityGroupId=sg-REPLACE_ME",       # from immich-cache-prod stack output
   "InstanceType=t4g.micro",
-  "WorkerMode=microservices",
-  "ImmichVersion=release",
-  "SSMDBConfPath=/immich/db/conf",
-  "SSMCacheConfPath=/immich/cache/conf",
-  "S3FilesystemId=fs-REPLACE_ME",
-  "AllowedCIDR=10.0.0.0/16",
+  "S3FilesystemId=fs-0de845be2a16d9f00",
+    "S3FilesSGId=sg-02538ae581500cb2c",
+  "AllowedCIDR=00.0.0.0/0",
+  "BucketName=immich-media-prod-us-east-1-704678691702",
   "Environment=prod"
 ]
 

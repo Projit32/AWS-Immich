@@ -109,14 +109,12 @@ Outputs:
   VolumeId:
     Description: EBS Volume ID — pass this into the EC2 stack parameter
     Value: !Ref ImmichDBVolume
-    Export:
-      Name: !Sub ${AWS::StackName}-VolumeId
+
 
   VolumeAZ:
     Description: AZ of the EBS volume — EC2 must be in the same AZ
     Value: !Ref AvailabilityZone
-    Export:
-      Name: !Sub ${AWS::StackName}-VolumeAZ
+
 
   BackupVaultName:
     Description: Name of the AWS Backup vault

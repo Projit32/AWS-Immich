@@ -114,18 +114,15 @@ Outputs:
     Description: >
       Valkey endpoint — use as REDIS_HOSTNAME in Immich env vars.
     Value: !GetAtt ValkeyCluster.PrimaryEndPoint.Address
-    Export:
-      Name: !Sub ${AWS::StackName}-CacheEndpoint
+
 
   CachePort:
     Description: Valkey port (always 6379)
     Value: !GetAtt ValkeyCluster.PrimaryEndPoint.Port
-    Export:
-      Name: !Sub ${AWS::StackName}-CachePort
+
 
   CacheSecurityGroupId:
     Description: >
       Cache security group ID — add this to your app EC2 egress if needed.
     Value: !Ref CacheSecurityGroup
-    Export:
-      Name: !Sub ${AWS::StackName}-CacheSecurityGroupId
+

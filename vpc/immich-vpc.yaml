@@ -1,5 +1,4 @@
 AWSTemplateFormatVersion: 2010-09-09
-Transform: AWS::Serverless-2016-10-31
 Description: VPC for account
 
 Parameters:
@@ -342,3 +341,107 @@ Resources:
       VPCs:
         - VPCId: !Ref PubPrivateVPC
           VPCRegion: !Ref AWS::Region
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref PubPrivateVPC
+
+  HostedZoneId:
+    Description: Route53 Private Hosted Zone ID
+    Value: !Ref PrivateHostedZone
+
+
+  HostedZoneName:
+    Value: !Ref HostedZoneName
+
+
+  PublicRouteTableId:
+    Value: !Ref PublicRouteTable
+
+
+  PrivateRouteTableId:
+    Value: !Ref PrivateRouteTable
+
+
+  PublicSubnet1Id:
+    Value: !Ref PublicSubnet1
+
+
+  PrivateSubnet1Id:
+    Value: !Ref PrivateSubnet1
+
+
+  PublicSubnet2Id:
+    Condition: 2ndSubnetRequired
+    Value: !Ref PublicSubnet2
+
+
+  PrivateSubnet2Id:
+    Condition: 2ndSubnetRequired
+    Value: !Ref PrivateSubnet2
+
+
+  PublicSubnet3Id:
+    Condition: 3rdSubnetRequired
+    Value: !Ref PublicSubnet3
+
+
+  PrivateSubnet3Id:
+    Condition: 3rdSubnetRequired
+    Value: !Ref PrivateSubnet3
+
+
+  PublicSubnet4Id:
+    Condition: 4thSubnetRequired
+    Value: !Ref PublicSubnet4
+
+
+  PrivateSubnet4Id:
+    Condition: 4thSubnetRequired
+    Value: !Ref PrivateSubnet4
+
+
+  PublicSubnet5Id:
+    Condition: 5thSubnetRequired
+    Value: !Ref PublicSubnet5
+
+
+  PrivateSubnet5Id:
+    Condition: 5thSubnetRequired
+    Value: !Ref PrivateSubnet5
+
+
+  PublicSubnet6Id:
+    Condition: 6thSubnetRequired
+    Value: !Ref PublicSubnet6
+
+
+  PrivateSubnet6Id:
+    Condition: 6thSubnetRequired
+    Value: !Ref PrivateSubnet6
+
+
+  PublicSubnetIds:
+    Description: Comma-separated list of public subnet IDs
+    Value: !Join
+      - ","
+      - - !Ref PublicSubnet1
+        - !If [ 2ndSubnetRequired, !Ref PublicSubnet2, !Ref AWS::NoValue ]
+        - !If [ 3rdSubnetRequired, !Ref PublicSubnet3, !Ref AWS::NoValue ]
+        - !If [ 4thSubnetRequired, !Ref PublicSubnet4, !Ref AWS::NoValue ]
+        - !If [ 5thSubnetRequired, !Ref PublicSubnet5, !Ref AWS::NoValue ]
+        - !If [ 6thSubnetRequired, !Ref PublicSubnet6, !Ref AWS::NoValue ]
+
+
+  PrivateSubnetIds:
+    Description: Comma-separated list of private subnet IDs
+    Value: !Join
+      - ","
+      - - !Ref PrivateSubnet1
+        - !If [ 2ndSubnetRequired, !Ref PrivateSubnet2, !Ref AWS::NoValue ]
+        - !If [ 3rdSubnetRequired, !Ref PrivateSubnet3, !Ref AWS::NoValue ]
+        - !If [ 4thSubnetRequired, !Ref PrivateSubnet4, !Ref AWS::NoValue ]
+        - !If [ 5thSubnetRequired, !Ref PrivateSubnet5, !Ref AWS::NoValue ]
+        - !If [ 6thSubnetRequired, !Ref PrivateSubnet6, !Ref AWS::NoValue ]
+

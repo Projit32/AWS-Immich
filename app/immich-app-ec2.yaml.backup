@@ -200,17 +200,14 @@ Outputs:
   InstanceId:
     Description: EC2 Instance ID
     Value: !Ref AppInstance
-    Export:
-      Name: !Sub ${AWS::StackName}-InstanceId
+
 
   PrivateIP:
     Description: Private IP of the instance
     Value: !GetAtt AppInstance.PrivateIp
-    Export:
-      Name: !Sub ${AWS::StackName}-PrivateIP
+
 
   AppSecurityGroupId:
     Description: Security group of this app instance — reference in other stacks
     Value: !Ref AppSecurityGroup
-    Export:
-      Name: !Sub ${AWS::StackName}-AppSecurityGroupId
+

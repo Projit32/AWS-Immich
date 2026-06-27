@@ -6,11 +6,18 @@ Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
 
-  PrivateSubnetIds:
+  SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
 
   S3FilesystemId:
     Type: String
+
+  S3FilesSGId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >
+      Security group of the S3 Files mount targets (exported from storage
+      stack as immich-storage-prod-S3FilesSGId). An ingress rule on
+      port 2049 (NFS) will be added to this SG from the app instance SG.
 
   EnvFileS3Arn:
     Type: String
@@ -49,6 +56,16 @@ Resources:
       ToPort: 2283
       CidrIp: 0.0.0.0/0
 
+  S3FilesIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref S3FilesSGId
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref HostSecurityGroup
+      Description: S3 NFS access from immich
+
   ECSInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -64,6 +81,8 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
+
 
   ECSInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -106,13 +125,16 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             set -euo pipefail
+            exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+              echo "Mounted ${S3FilesystemId} to /mnt/immich"
             fi
             if ! grep -q "${S3FilesystemId}" /etc/fstab; then
               echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+              echo "Added ${S3FilesystemId} to /etc/fstab"
             fi
 
   WorkerLaunchTemplate:
@@ -128,22 +150,25 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash
             set -euo pipefail
+            exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+              echo "Mounted ${S3FilesystemId} to /mnt/immich"
             fi
             if ! grep -q "${S3FilesystemId}" /etc/fstab; then
               echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+              echo "Added ${S3FilesystemId} to /etc/fstab"
             fi
 
   ApiASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       MinSize: "0"
-      MaxSize: "1"
+      MaxSize: "3"
       DesiredCapacity: "0"
-      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      VPCZoneIdentifier: !Ref SubnetIds
       MixedInstancesPolicy:
         InstancesDistribution:
           OnDemandPercentageAboveBaseCapacity: 0
@@ -160,9 +185,9 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       MinSize: "0"
-      MaxSize: "1"
+      MaxSize: "3"
       DesiredCapacity: "0"
-      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      VPCZoneIdentifier: !Ref SubnetIds
       MixedInstancesPolicy:
         InstancesDistribution:
           OnDemandPercentageAboveBaseCapacity: 0
@@ -199,6 +224,10 @@ Resources:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
       Cluster: !Ref ECSCluster
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref ApiCapacityProvider
+          Weight: 1
+          Base: 0
       CapacityProviders:
         - !Ref ApiCapacityProvider
         - !Ref WorkerCapacityProvider
@@ -207,8 +236,10 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-api
-      NetworkMode: awsvpc
+      NetworkMode: bridge
       RequiresCompatibilities: [EC2]
+      Cpu: 1024
+      Memory: 1024
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
         - Name: uploads
@@ -218,6 +249,8 @@ Resources:
         - Name: immich-api
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
+          Cpu: 1024
+          Memory: 1024
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -241,8 +274,10 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-microservices
-      NetworkMode: awsvpc
+      NetworkMode: bridge
       RequiresCompatibilities: [EC2]
+      Cpu: 3072
+      Memory: 6144
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
         - Name: uploads
@@ -252,6 +287,8 @@ Resources:
         - Name: immich-microservices
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
+          Cpu: 3072
+          Memory: 6144
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -274,17 +311,11 @@ Resources:
       - ClusterCapacityProviders
     Properties:
       Cluster: !Ref ECSCluster
-      DesiredCount: 1
+      DesiredCount: 0
       CapacityProviderStrategy:
         - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
       TaskDefinition: !Ref ApiTaskDefinition
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          SecurityGroups:
-            - !Ref HostSecurityGroup
-          Subnets: !Ref PrivateSubnetIds
 
   WorkerService:
     Type: AWS::ECS::Service
@@ -297,12 +328,6 @@ Resources:
         - CapacityProvider: !Ref WorkerCapacityProvider
           Weight: 1
       TaskDefinition: !Ref WorkerTaskDefinition
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          SecurityGroups:
-            - !Ref HostSecurityGroup
-          Subnets: !Ref PrivateSubnetIds
 
 Outputs:
   ClusterName:

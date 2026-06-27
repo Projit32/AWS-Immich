@@ -12,11 +12,10 @@ Parameters:
     Type: AWS::EC2::VPC::Id
     Description: VPC where the S3 Files mount targets will be created.
 
-  SubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
     Description: >
-      Subnets for S3 Files mount targets — one per AZ where your app EC2s run.
-      Provide exactly 2 subnets (one per AZ). Each gets its own mount target.
+      Subnets for S3 Files mount targets.
 
   # ── Bucket ─────────────────────────────────────────────────────────────────
   BucketName:
@@ -154,53 +153,40 @@ Resources:
         - Key: ManagedBy
           Value: CloudFormation
 
-  # ── Mount Target AZ 1 ─────────────────────────────────────────────────────
+  # ── Mount Target ─────────────────────────────────────────────────────
   MountTarget0:
     Type: AWS::S3Files::MountTarget
     Properties:
       FileSystemId: !Ref ImmichFilesystem
-      SubnetId: !Select [0, !Ref SubnetIds]
+      SubnetId: !Ref SubnetId
       SecurityGroups:
         - !Ref S3FilesSG
 
-  # ── Mount Target AZ 2 ─────────────────────────────────────────────────────
-  MountTarget1:
-    Type: AWS::S3Files::MountTarget
-    Properties:
-      FileSystemId: !Ref ImmichFilesystem
-      SubnetId: !Select [1, !Ref SubnetIds]
-      SecurityGroups:
-        - !Ref S3FilesSG
 
 Outputs:
 
   BucketName:
     Description: S3 bucket name
     Value: !Ref ImmichBucket
-    Export:
-      Name: !Sub ${AWS::StackName}-BucketName
+
 
   BucketArn:
     Description: S3 bucket ARN
     Value: !GetAtt ImmichBucket.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-BucketArn
+
 
   FilesystemId:
     Description: >
       S3 Files filesystem ID — pass this as S3FilesystemId in the app EC2 stack.
     Value: !Ref ImmichFilesystem
-    Export:
-      Name: !Sub ${AWS::StackName}-FilesystemId
+
 
   S3FilesSGId:
     Description: S3 Files mount target security group ID
     Value: !Ref S3FilesSG
-    Export:
-      Name: !Sub ${AWS::StackName}-S3FilesSGId
+
 
   S3FilesRoleArn:
     Description: IAM role ARN used by S3 Files to access the bucket
     Value: !GetAtt S3FilesRole.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-S3FilesRoleArn
+
