@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Immich Valkey Cache EC2 Instance
+
+Parameters:
+
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+
+  BucketName:
+    Type: String
+
+  KeyPair:
+    Type: String
+    Default: ""
+
+  ImageLocationS3Uri:
+    Type: String
+
+Conditions:
+  HasKey: !Not [!Equals [!Ref KeyPair, ""]]
+
+Resources:
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Valkey Cache
+      VpcId: !Ref VpcId
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedCIDR
+          Description: cache port
+
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: immich-valkey-sg
+
+  CacheInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-valkey-role"
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:HeadObject
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketName}/*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketName}
+
+      Tags:
+        - Key: Name
+          Value: immich-valkey-role
+
+  CacheInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref CacheInstanceRole
+
+  CacheInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+
+      InstanceType: !Ref InstanceType
+
+      IamInstanceProfile: !Ref CacheInstanceProfile
+
+      KeyName: !If
+        - HasKey
+        - !Ref KeyPair
+        - !Ref AWS::NoValue
+
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref CacheSecurityGroup
+
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: true
+            Encrypted: true
+
+      Tags:
+        - Key: Name
+          Value: immich-valkey
+
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+
+          until systemctl is-active --quiet docker; do
+            sleep 2
+          done
+          
+          aws s3 cp ${ImageLocationS3Uri}/valkey-9-arm64.tar .
+          docker load -i valkey-9-arm64.tar
+          
+
+          cat >/etc/systemd/system/valkey.service <<'EOF'
+          [Unit]
+          Description=Valkey Cache
+          Requires=docker.service
+          After=docker.service
+
+          [Service]
+          Type=simple
+          Restart=always
+          RestartSec=5
+
+          ExecStartPre=-/usr/bin/docker rm -f valkey
+
+          ExecStart=/usr/bin/docker run \
+            --name valkey \
+            --publish 6379:6379 \
+            --log-driver=journald \
+            valkey/valkey:9
+
+          ExecStop=/usr/bin/docker stop -t 20 valkey
+
+          ExecStopPost=-/usr/bin/docker rm -f valkey
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable valkey.service
+          systemctl start valkey.service
+
+Outputs:
+
+  InstanceId:
+    Value: !Ref CacheInstance
+
+  PrivateIp:
+    Value: !GetAtt CacheInstance.PrivateIp
+
+  AvailabilityZone:
+    Value: !GetAtt CacheInstance.AvailabilityZone
+
+  SecurityGroupId:
+    Value: !Ref CacheSecurityGroup
+
+  InstanceProfile:
+    Value: !Ref CacheInstanceProfile
+
+  Role:
+    Value: !Ref CacheInstanceRole

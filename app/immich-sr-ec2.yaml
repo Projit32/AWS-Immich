@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Immich App - EC2 instance (ECS-optimized AMI, Graviton t4g) running either
+  the immich-server (API) or immich-microservices container via plain Docker.
+  DB and cache config are read from two pre-existing SSM parameters at boot.
+  SSM format:
+    /immich/db/conf    → db_host=x,db_pass=y,db_name=a
+    /immich/cache/conf → cache_host=x,cache_port=y
+
+Parameters:
+
+  # ── Networking ─────────────────────────────────────────────────────────────
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to launch the instance into.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for the EC2 instance.
+
+  # ── Instance ───────────────────────────────────────────────────────────────
+  InstanceType:
+    Type: String
+    Default: t4g.medium
+    AllowedValues:
+      - t4g.micro
+      - t4g.small
+      - t4g.medium
+      - t4g.large
+      - t4g.xlarge
+    Description: t4g.medium recommended for API+microservices colocated.
+
+
+
+  # ── Access ─────────────────────────────────────────────────────────────────
+  AllowedCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR allowed SSH access. Use your VPC CIDR.
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+
+Resources:
+
+  # ── Security Group ────────────────────────────────────────────────────────
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Immich EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCIDR
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedCIDR
+          Description: DB port
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedCIDR
+          Description: cache port
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub immich-sg-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── IAM Role ──────────────────────────────────────────────────────────────
+  AppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub immich-role-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref AppInstanceRole
+
+  # ── EC2 Instance ──────────────────────────────────────────────────────────
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}'
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+      IamInstanceProfile: !Ref AppInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee /var/log/immich-app-init.log | logger -t immich-app-init) 2>&1
+          
+          mkdir -p /data/postgres/data
+          chown -R 999:999 /data/postgres
+
+          cat >/etc/systemd/system/immich-db.service <<EOF
+          [Unit]
+          Description=Immich PostgreSQL
+          Requires=docker.service
+          After=docker.service network-online.target
+
+          [Service]
+          Type=simple
+          Restart=always
+          RestartSec=10
+
+          ExecStartPre=-/usr/bin/docker rm -f immich-postgres
+
+          ExecStart=/usr/bin/docker run \
+            --name immich-postgres \
+            --restart=no \
+            -p 5432:5432 \
+            -e POSTGRES_USER=immich \
+            -e POSTGRES_PASSWORD=TestPass \
+            -e POSTGRES_DB=immich \
+            -v /data/postgres/data:/var/lib/postgresql/data \
+              ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+
+          ExecStop=/usr/bin/docker stop -t 60 immich-postgres
+          ExecStopPost=/usr/bin/sync
+          ExecStopPost=-/usr/bin/docker rm -f immich-postgres
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          systemctl daemon-reload
+          systemctl enable immich-db.service
+          systemctl start immich-db.service
+          
+          cat >/etc/systemd/system/immich-cache.service <<EOF
+          [Unit]
+          Description=Immich Valkey
+          Requires=docker.service
+          After=docker.service network-online.target
+
+          [Service]
+          Type=simple
+          Restart=always
+          RestartSec=10
+
+          ExecStartPre=-/usr/bin/docker rm -f immich-valkey
+
+          ExecStart=/usr/bin/docker run \
+            --name immich-valkey \
+            -p 6379:6379 \
+            valkey/valkey:9
+
+          ExecStop=/usr/bin/docker stop -t 60 immich-valkey
+          ExecStopPost=-/usr/bin/docker rm -f immich-valkey
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable immich-cache.service
+          systemctl start immich-cache.service
+          
+          echo "INIT COMPLETE"
+      Tags:
+        - Key: Name
+          Value: !Sub immich-${Environment}
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref AppInstance
+
+
+  PrivateIP:
+    Description: Private IP of the instance
+    Value: !GetAtt AppInstance.PrivateIp
+
+
+  AppSecurityGroupId:
+    Description: Security group of this app instance — reference in other stacks
+    Value: !Ref AppSecurityGroup
+
