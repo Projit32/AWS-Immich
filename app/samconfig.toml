@@ -35,8 +35,8 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "VpcId=vpc-0ba8dc166b641aa2b",
   "SubnetIds=subnet-05827c47b9a6e2a13",
-  "S3FilesystemId=fs-040f46cdc27fb76fe",
-  "S3FilesSGId=sg-0697282c3b77f3492",
+  "S3FilesystemId=fs-0ee4a1bf05bb82f1a",
+  "S3FilesSGId=sg-0056373cad6b872bf",
   "EnvFileS3Arn=arn:aws:s3:::immich-conf-us-east-1-704678691702/immich.env"
 ]
 

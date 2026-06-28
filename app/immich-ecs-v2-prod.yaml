@@ -13,7 +13,7 @@ Parameters:
     Type: String
 
   S3FilesSGId:
-    Type: AWS::EC2::SecurityGroup::Id
+    Type: String
     Description: >
       Security group of the S3 Files mount targets (exported from storage
       stack as immich-storage-prod-S3FilesSGId). An ingress rule on
@@ -236,10 +236,10 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-api
-      NetworkMode: bridge
+      NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 1024
-      Memory: 1024
+      Memory: 756
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
         - Name: uploads
@@ -250,7 +250,7 @@ Resources:
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
           Cpu: 1024
-          Memory: 1024
+          Memory: 756
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -274,7 +274,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-microservices
-      NetworkMode: bridge
+      NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 3072
       Memory: 6144
@@ -316,6 +316,11 @@ Resources:
         - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
       TaskDefinition: !Ref ApiTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref HostSecurityGroup
 
   WorkerService:
     Type: AWS::ECS::Service
@@ -328,6 +333,11 @@ Resources:
         - CapacityProvider: !Ref WorkerCapacityProvider
           Weight: 1
       TaskDefinition: !Ref WorkerTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref HostSecurityGroup
 
 Outputs:
   ClusterName:
