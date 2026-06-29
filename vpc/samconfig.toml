@@ -1,7 +1,7 @@
 version = 0.1
 # ── Storage Stack ─────────────────────────────────────────────────────────────
 [vpc.deploy.parameters]
-stack_name        = "immich-vpc-prod"
+stack_name        = "immich-vpc"
 template_file     = "immich-vpc.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
@@ -11,13 +11,10 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "VPCName=immich-vpc",
   "VPCRegion=us-east-1",
-  "Subnet2Required=true",
   "NatGatewayRequired=false",
   "HostedZoneName=immich.internal"
 ]
 
 tags = [
   "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
 ]

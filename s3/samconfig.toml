@@ -1,7 +1,7 @@
 version = 0.1
 # ── Storage Stack ─────────────────────────────────────────────────────────────
 [storage.deploy.parameters]
-stack_name        = "immich-storage-s3-prod"
+stack_name        = "immich-storage-s3"
 template_file     = "immich-storage-s3.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
@@ -9,22 +9,19 @@ confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-0ba8dc166b641aa2b",
-  "SubnetId=subnet-05827c47b9a6e2a13",
+  "VpcId=vpc-02cab24e4cec51cb5",
+  "SubnetId=subnet-017bae2cb00a4e949",
   "BucketName=immich-media",
   "IntelligentTieringDays=60",
-  "Environment=prod"
 ]
 
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]
 
 # ── Config Stack ─────────────────────────────────────────────────────────────
 [conf.deploy.parameters]
-stack_name        = "immich-conf-s3-prod"
+stack_name        = "immich-conf-s3"
 template_file     = "immich-conf-s3.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
@@ -36,7 +33,5 @@ parameter_overrides = [
 ]
 
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]

@@ -342,6 +342,16 @@ Resources:
         - VPCId: !Ref PubPrivateVPC
           VPCRegion: !Ref AWS::Region
 
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+
 Outputs:
   VpcId:
     Description: VPC ID

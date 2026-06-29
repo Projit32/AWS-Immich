@@ -33,12 +33,6 @@ Parameters:
       Days after which original photos/videos transition to Intelligent-Tiering.
       Objects under 128KB are excluded to avoid minimum size charges.
 
-  # ── General ────────────────────────────────────────────────────────────────
-  Environment:
-    Type: String
-    Default: prod
-    AllowedValues: [dev, staging, prod]
-
 Resources:
 
   # ── S3 Bucket ──────────────────────────────────────────────────────────────
@@ -76,18 +70,14 @@ Resources:
               DaysAfterInitiation: 3
       Tags:
         - Key: Name
-          Value: !Sub immich-media-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: ManagedBy
-          Value: CloudFormation
+          Value: !Sub immich-media-s3
 
   # ── IAM Role for S3 Files ──────────────────────────────────────────────────
   # S3 Files requires an IAM role to access the bucket on behalf of the filesystem.
   S3FilesRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub immich-s3files-role-${Environment}
+      RoleName: !Sub immich-s3files-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -117,9 +107,6 @@ Resources:
                 Resource:
                   - !GetAtt ImmichBucket.Arn
                   - !Sub ${ImmichBucket.Arn}/*
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
 
   # ── S3 Files Security Group ────────────────────────────────────────────────
   S3FilesSG:
@@ -133,9 +120,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub immich-s3files-sg-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
+          Value: !Sub immich-s3files-sg
 
   # ── S3 Files Filesystem ────────────────────────────────────────────────────
   ImmichFilesystem:
@@ -147,11 +132,8 @@ Resources:
       AcceptBucketWarning: true           # Required acknowledgement
       Tags:
         - Key: Name
-          Value: !Sub immich-fs-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: ManagedBy
-          Value: CloudFormation
+          Value: !Sub immich-fs
+
 
   # ── Mount Target ─────────────────────────────────────────────────────
   MountTarget0:
