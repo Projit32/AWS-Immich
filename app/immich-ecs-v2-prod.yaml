@@ -210,6 +210,8 @@ Resources:
         ManagedScaling:
           Status: ENABLED
           TargetCapacity: 100
+          MinimumScalingStepSize: 1            # Forces 1 instance scaling increments
+          MaximumScalingStepSize: 1            # Prevents overprovisioning 2 instances at once
 
   WorkerCapacityProvider:
     Type: AWS::ECS::CapacityProvider
@@ -219,6 +221,8 @@ Resources:
         ManagedScaling:
           Status: ENABLED
           TargetCapacity: 100
+          MinimumScalingStepSize: 1            # Forces 1 instance scaling increments
+          MaximumScalingStepSize: 1            # Prevents overprovisioning 2 instances at once
 
   ClusterCapacityProviders:
     Type: AWS::ECS::ClusterCapacityProviderAssociations

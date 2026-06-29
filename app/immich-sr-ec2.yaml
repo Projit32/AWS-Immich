@@ -38,12 +38,6 @@ Parameters:
     Default: 10.0.0.0/16
     Description: CIDR allowed SSH access. Use your VPC CIDR.
 
-  Environment:
-    Type: String
-    Default: prod
-    AllowedValues: [dev, staging, prod]
-
-
 Resources:
 
   # ── Security Group ────────────────────────────────────────────────────────
@@ -72,17 +66,12 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
           Description: Allow all outbound
-      Tags:
-        - Key: Name
-          Value: !Sub immich-sg-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
 
   # ── IAM Role ──────────────────────────────────────────────────────────────
   AppInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub immich-role-${Environment}
+      RoleName: !Sub immich-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -191,13 +180,6 @@ Resources:
           systemctl start immich-cache.service
           
           echo "INIT COMPLETE"
-      Tags:
-        - Key: Name
-          Value: !Sub immich-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: ManagedBy
-          Value: CloudFormation
 
 Outputs:
   InstanceId:

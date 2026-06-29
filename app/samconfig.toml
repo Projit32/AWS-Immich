@@ -10,17 +10,14 @@ confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-0ba8dc166b641aa2b",
-  "SubnetId=subnet-05827c47b9a6e2a13",  
-  "InstanceType=t4g.large",
+  "VpcId=vpc-02cab24e4cec51cb5",
+  "SubnetId=subnet-0f05fbb3404eabb19",
+  "InstanceType=t4g.medium",
   "AllowedCIDR=0.0.0.0/0",
-  "Environment=prod"
 ]
 
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]
 
 # ── App Stack ────────────────────────────────────────────────────────────
@@ -33,15 +30,15 @@ confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-0ba8dc166b641aa2b",
-  "SubnetIds=subnet-05827c47b9a6e2a13",
-  "S3FilesystemId=fs-0ee4a1bf05bb82f1a",
-  "S3FilesSGId=sg-0056373cad6b872bf",
-  "EnvFileS3Arn=arn:aws:s3:::immich-conf-us-east-1-704678691702/immich.env"
+  "VpcId=vpc-02cab24e4cec51cb5",
+  "SubnetIds=subnet-017bae2cb00a4e949",
+  "S3FilesystemId=fs-0b92c011139b425b8",
+  "S3FilesSGId=sg-04e9b4071da31c86e",
+  "EnvFileS3Arn=arn:aws:s3:::immich-conf-us-east-1-704678691702/immich.env",
+  "KeyPairName=Test",
+  "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images"
 ]
 
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]
