@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich Valkey Cache EC2 Instance
+Description: Immich Valkey Traefik EC2 Instance
 
 Parameters:
 
   InstanceType:
     Type: String
-    Default: t4g.micro
+    Default: t4g.nano
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -28,10 +28,10 @@ Conditions:
 
 Resources:
 
-  CacheSecurityGroup:
+  TraefikSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security Group for Valkey Cache
+      GroupDescription: Security Group for Traefik
       VpcId: !Ref VpcId
 
       SecurityGroupIngress:
@@ -41,23 +41,24 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: SSH access
         - IpProtocol: tcp
-          FromPort: 6379
-          ToPort: 6379
-          CidrIp: !Ref AllowedCIDR
-          Description: cache port
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Traefik EntryPoint
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: Traefik Dashboard
 
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
 
-      Tags:
-        - Key: Name
-          Value: immich-valkey-sg
-
-  CacheInstanceRole:
+  TraefikInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${AWS::StackName}-valkey-role"
+      RoleName: !Sub "${AWS::StackName}-Traefik-role"
 
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -89,18 +90,29 @@ Resources:
                   - s3:ListBucket
                 Resource:
                   - !Sub arn:aws:s3:::${BucketName}
+        - PolicyName: TraefikECSReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:ListClusters"
+                  - "ecs:DescribeClusters"
+                  - "ecs:ListTasks"
+                  - "ecs:DescribeTasks"
+                  - "ecs:ListContainerInstances"
+                  - "ecs:DescribeContainerInstances"
+                  - "ecs:DescribeTaskDefinition"
+                  - "ec2:DescribeInstances"
+                Resource: "*"
 
-      Tags:
-        - Key: Name
-          Value: immich-valkey-role
-
-  CacheInstanceProfile:
+  TraefikInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref CacheInstanceRole
+        - !Ref TraefikInstanceRole
 
-  CacheInstance:
+  TraefikInstance:
     Type: AWS::EC2::Instance
     Properties:
 
@@ -108,7 +120,7 @@ Resources:
 
       InstanceType: !Ref InstanceType
 
-      IamInstanceProfile: !Ref CacheInstanceProfile
+      IamInstanceProfile: !Ref TraefikInstanceProfile
 
       KeyName: !If
         - HasKey
@@ -123,7 +135,7 @@ Resources:
         - DeviceIndex: 0
           SubnetId: !Ref SubnetId
           GroupSet:
-            - !Ref CacheSecurityGroup
+            - !Ref TraefikSecurityGroup
 
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
@@ -133,26 +145,22 @@ Resources:
             DeleteOnTermination: true
             Encrypted: true
 
-      Tags:
-        - Key: Name
-          Value: immich-valkey
-
       UserData:
-        Fn::Base64: |
+        Fn::Base64: !Sub |
           #!/bin/bash
           set -euxo pipefail
+          exec > >(tee /var/log/traefik.log | logger -t traefik) 2>&1
 
           until systemctl is-active --quiet docker; do
             sleep 2
           done
+        
+          aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
+          docker load -i traefik.tar
           
-          aws s3 cp ${ImageLocationS3Uri}/valkey-9-arm64.tar .
-          docker load -i valkey-9-arm64.tar
-          
-
-          cat >/etc/systemd/system/valkey.service <<'EOF'
+          cat >/etc/systemd/system/treafik.service <<'EOF'
           [Unit]
-          Description=Valkey Cache
+          Description=Treafik
           Requires=docker.service
           After=docker.service
 
@@ -161,42 +169,50 @@ Resources:
           Restart=always
           RestartSec=5
 
-          ExecStartPre=-/usr/bin/docker rm -f valkey
+          ExecStartPre=-/usr/bin/docker rm -f traefik
 
           ExecStart=/usr/bin/docker run \
-            --name valkey \
-            --publish 6379:6379 \
-            --log-driver=journald \
-            valkey/valkey:9
+            --name traefik \
+            --restart unless-stopped \
+            -p 80:80 \
+            -p 8080:8080 \
+            -e AWS_REGION=us-east-1 \
+            traefik:latest \
+            --api.insecure=true \
+            --providers.ecs=true \
+            --providers.ecs.clusters=immich-cluster \
+            --providers.ecs.region=us-east-1 \
+            --providers.ecs.exposedByDefault=false \
+            --entrypoints.web.address=:80
 
-          ExecStop=/usr/bin/docker stop -t 20 valkey
+          ExecStop=/usr/bin/docker stop -t 20 traefik
 
-          ExecStopPost=-/usr/bin/docker rm -f valkey
+          ExecStopPost=-/usr/bin/docker rm -f traefik
 
           [Install]
           WantedBy=multi-user.target
           EOF
 
           systemctl daemon-reload
-          systemctl enable valkey.service
-          systemctl start valkey.service
+          systemctl enable treafik.service
+          systemctl start treafik.service
 
 Outputs:
 
   InstanceId:
-    Value: !Ref CacheInstance
+    Value: !Ref TraefikInstance
 
   PrivateIp:
-    Value: !GetAtt CacheInstance.PrivateIp
+    Value: !GetAtt TraefikInstance.PrivateIp
 
   AvailabilityZone:
-    Value: !GetAtt CacheInstance.AvailabilityZone
+    Value: !GetAtt TraefikInstance.AvailabilityZone
 
   SecurityGroupId:
-    Value: !Ref CacheSecurityGroup
+    Value: !Ref TraefikSecurityGroup
 
   InstanceProfile:
-    Value: !Ref CacheInstanceProfile
+    Value: !Ref TraefikInstanceProfile
 
   Role:
-    Value: !Ref CacheInstanceRole
+    Value: !Ref TraefikInstanceRole
