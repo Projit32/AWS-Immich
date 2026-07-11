@@ -22,7 +22,7 @@ Parameters:
 
   StateParameterName:
     Type: String
-    Default: /immich/db/state
+    Default: /immich/db-cache/state
 
   SubnetId:
     Type: AWS::EC2::Subnet::Id
@@ -134,7 +134,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
 
-      Name: immich-db-restore-rule
+      Name: immich-db-cache-restore-rule
 
       Description: Retry Spot restoration every 30 minutes
 
@@ -154,7 +154,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
 
-      Name: immich-db-spot-interruption-rule
+      Name: immich-db-cache-spot-interruption-rule
 
       EventPattern:
 
@@ -177,7 +177,7 @@ Resources:
 
     Properties:
 
-      FunctionName: immich-db-failover
+      FunctionName: immich-db-cache-failover
 
       CodeUri: ./handlers/
 
@@ -201,14 +201,14 @@ Resources:
 
           SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
 
-          RESTORE_RULE_NAME: immich-db-restore-rule
+          RESTORE_RULE_NAME: immich-db-cache-restore-rule
 
           SUBNET_ID: !Ref SubnetId
 
   FailoverLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'
     Properties:
-      LogGroupName: /aws/lambda/immich-db-failover
+      LogGroupName: /aws/lambda/immich-db-cache-failover
       RetentionInDays: 7
   #########################################################
   # Restore Lambda
@@ -219,7 +219,7 @@ Resources:
 
     Properties:
 
-      FunctionName: immich-db-restore
+      FunctionName: immich-db-cache-restore
 
       CodeUri: ./handlers/
 
@@ -243,14 +243,14 @@ Resources:
 
           OD_LAUNCH_TEMPLATE_ID: !Ref OnDemandLaunchTemplateId
 
-          RESTORE_RULE_NAME: immich-db-restore-rule
+          RESTORE_RULE_NAME: immich-db-cache-restore-rule
 
           SUBNET_ID: !Ref SubnetId
 
   RecoveryLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'
     Properties:
-      LogGroupName: /aws/lambda/immich-db-restore
+      LogGroupName: /aws/lambda/immich-db-cache-restore
       RetentionInDays: 7
   #########################################################
   # EventBridge Permissions

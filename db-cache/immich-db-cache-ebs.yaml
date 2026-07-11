@@ -24,11 +24,6 @@ Parameters:
     MaxValue: 35
     Description: Number of daily snapshots to retain.
 
-  Environment:
-    Type: String
-    Default: prod
-    AllowedValues: [dev, staging, prod]
-
 Resources:
 
   # ── EBS Volume ────────────────────────────────────────────────────────────
@@ -46,9 +41,7 @@ Resources:
       MultiAttachEnabled: false
       Tags:
         - Key: Name
-          Value: !Sub immich-db-data-${Environment}
-        - Key: Environment
-          Value: !Ref Environment
+          Value: !Sub immich-db-cache-data
         - Key: ManagedBy
           Value: CloudFormation
 
@@ -56,9 +49,8 @@ Resources:
   ImmichBackupVault:
     Type: AWS::Backup::BackupVault
     Properties:
-      BackupVaultName: !Sub immich-db-vault-${Environment}
+      BackupVaultName: !Sub immich-db-cache-vault
       BackupVaultTags:
-        Environment: !Ref Environment
         ManagedBy: CloudFormation
 
   # ── AWS Backup: Plan (daily snapshot, configurable retention) ─────────────
@@ -66,7 +58,7 @@ Resources:
     Type: AWS::Backup::BackupPlan
     Properties:
       BackupPlan:
-        BackupPlanName: !Sub immich-db-backup-plan-${Environment}
+        BackupPlanName: !Sub immich-db-cache-backup-plan
         BackupPlanRule:
           - RuleName: DailyBackup
             TargetBackupVault: !Ref ImmichBackupVault
@@ -75,14 +67,12 @@ Resources:
             CompletionWindowMinutes: 180
             Lifecycle:
               DeleteAfterDays: !Ref BackupRetentionDays
-            RecoveryPointTags:
-              Environment: !Ref Environment
 
   # ── IAM Role for AWS Backup ───────────────────────────────────────────────
   BackupRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub immich-backup-role-${Environment}
+      RoleName: !Sub immich-backup-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

@@ -1,12 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich PostgreSQL Launch Templates
+Description: Immich PostgreSQL & Valkey Launch Templates
 
 Parameters:
-
-  Environment:
-    Type: String
-    Default: prod
-    AllowedValues: [dev, staging, prod]
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -26,16 +21,22 @@ Parameters:
       - t4g.medium
       - t4g.large
 
-  CredentialSSMName:
+  EnvFileS3URI:
     Type: String
-    Default: /immich/conf/db
 
-  ImmichPostgresVersion:
+  ImageLocationS3Uri:
     Type: String
-    Default: 'release'
-    Description: >
-      Tag of ghcr.io/immich-app/postgres to pull.
-      Use 'release' for latest stable, or pin to a specific tag e.g. v0.2.0.
+
+  KeyPair:
+    Type: String
+    Default: ""
+
+  PrivateSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet for the EC2 instance.
+
+Conditions:
+  HasKey: !Not [ !Equals [ !Ref KeyPair, "" ] ]
 
 Resources:
 
@@ -43,7 +44,7 @@ Resources:
   # Security Group
   ###########################################################
 
-  DbSecurityGroup:
+  DBCacheSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Immich DB - Postgres and SSH access
@@ -55,6 +56,11 @@ Resources:
           CidrIp: !Ref AllowedCIDR
           Description: Postgres from VPC
         - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedCIDR
+          Description: Valkey from VPC
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: !Ref AllowedCIDR
@@ -62,10 +68,10 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
-          Description: Allow all outbound (Docker pull, SSM, ECR, etc.)
+          Description: Allow all outbound
       Tags:
         - Key: Name
-          Value: !Sub immich-db-sg-${Environment}
+          Value: !Sub immich-db-cache-sg
 
   ###########################################################
   # IAM
@@ -87,22 +93,7 @@ Resources:
 
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-
-      Policies:
-        - PolicyName: postgres-ssm-read
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-              - Effect: Allow
-
-                Action:
-                  - ssm:GetParameter
-
-                Resource: !Sub
-                  - arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SSMPath}
-                  - SSMPath: !Ref CredentialSSMName
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
 
   DbInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -117,7 +108,7 @@ Resources:
   StateParameter:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: /immich/conf/db/state
+      Name: /immich/db-cache/state
       Type: String
       Value: |
         {
@@ -134,7 +125,7 @@ Resources:
     Properties:
 
       LaunchTemplateName:
-        !Sub immich-db-spot-${Environment}
+        !Sub immich-db-cache-spot
 
       LaunchTemplateData:
 
@@ -142,11 +133,19 @@ Resources:
 
         InstanceType: !Ref InstanceType
 
+        KeyName: !If
+          - HasKey
+          - !Ref KeyPair
+          - !Ref AWS::NoValue
+
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            SubnetId: !Ref PrivateSubnetId
+            Groups:
+              - !Ref DBCacheSecurityGroup
+        
         IamInstanceProfile:
           Arn: !GetAtt DbInstanceProfile.Arn
-
-        SecurityGroupIds:
-          - !Ref DbSecurityGroup
 
         MetadataOptions:
           HttpTokens: required
@@ -160,19 +159,7 @@ Resources:
 
             Tags:
               - Key: Name
-                Value: !Sub immich-db-spot-${Environment}
-
-              - Key: Role
-                Value: postgres
-
-              - Key: Type
-                Value: spot
-
-              - Key: Application
-                Value: immich
-
-              - Key: Environment
-                Value: !Ref Environment
+                Value: !Sub immich-db-cache-spot
 
         UserData:
           Fn::Base64:
@@ -221,35 +208,35 @@ Resources:
               # Immich postgres image runs as uid 999
               mkdir -p /data/postgres/data
               chown -R 999:999 /data/postgres
-
-
-
-              # ── 4. Parse credentials from SSM ──────────────────────────────────
-              # SSM value format: user=username,password=password,db=immich_db
-              SSM_VALUE=$(aws ssm get-parameter \
-                --name ${CredentialSSMName} \
-                --with-decryption \
-                --query "Parameter.Value" \
-                --output text)
-
-              DB_USER=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^user=' | cut -d= -f2)
-              DB_PASS=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^password=' | cut -d= -f2)
-              DB_NAME=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^db=' | cut -d= -f2)
             
-              if [ -z "$DB_USER" ] || [ -z "$DB_PASS" ] || [ -z "$DB_NAME" ]; then
-                echo "ERROR: Failed to parse one or more credentials from SSM value."
-                echo "Expected format: user=x,password=y,db=z"
-                exit 1
-              fi
+              mkdir -p /data/valkey
+              chown -R 999:999 /data/valkey
+            
+              echo "Required files made"
 
-              echo "Parsed credentials — user=$DB_USER, db=$DB_NAME"
+              # ── 4. Parse env from S3 ──────────────────────────────────
             
+              aws s3 cp "${EnvFileS3URI}" ./var.env
+              source ./var.env
+              
+              DB_USER=$DB_USERNAME
+              DB_PASS=$DB_PASSWORD
+              DB_NAME=$DB_DATABASE_NAME
             
-              # ── 5. Pull Immich Postgres image ──────────────────────────────────
-              echo "Pulling docker file"
-              docker pull ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
+              echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
+              
+      
+              # ── 5. Pull Immich Postgres and Valkey image from S3 ──────────────────────────────────
+              echo "Downloading images"
             
-              # ── 6. Systemd service for lifecycle management ────────────────────────────────────────
+              aws s3 cp ${ImageLocationS3Uri}/valkey.tar .
+              docker load -i valkey.tar
+            
+              aws s3 cp ${ImageLocationS3Uri}/postgres.tar .
+              docker load -i postgres.tar
+              
+            
+              # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
 
               cat >/etc/systemd/system/immich-db.service <<EOF
               [Unit]
@@ -272,7 +259,7 @@ Resources:
                 -e POSTGRES_PASSWORD="$DB_PASS" \
                 -e POSTGRES_DB="$DB_NAME" \
                 -v /data/postgres/data:/var/lib/postgresql/data \
-                ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
+                ghcr.io/immich-app/postgres:14-vectorchord0.4.3
 
               ExecStop=/usr/bin/docker stop -t 60 immich-postgres
               ExecStopPost=/usr/bin/sync
@@ -285,6 +272,41 @@ Resources:
               systemctl daemon-reload
               systemctl enable immich-db.service
               systemctl start immich-db.service
+            
+              # ── 7. Systemd service for lifecycle management for cache ────────────────────────────────────────
+              
+              cat >/etc/systemd/system/valkey.service <<'EOF'
+              [Unit]
+              Description=Valkey Cache
+              Requires=docker.service
+              After=docker.service
+              
+              [Service]
+              Type=simple
+              Restart=always
+              RestartSec=5
+              
+              ExecStartPre=-/usr/bin/docker rm -f valkey-server
+              
+              ExecStart=/usr/bin/docker run \
+                --name valkey-server \
+                --restart always \
+                -p 6379:6379 \
+                -v /data/valkey:/data \
+                valkey/valkey:9 \
+                valkey-server --save 900 1 --appendonly yes
+              
+              ExecStop=/usr/bin/docker stop -t 20 valkey-server
+              
+              ExecStopPost=-/usr/bin/docker rm -f valkey-server
+              
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+              
+              systemctl daemon-reload
+              systemctl enable valkey.service
+              systemctl start valkey.service
               echo "INIT Success"
 
   ###########################################################
@@ -297,7 +319,7 @@ Resources:
     Properties:
 
       LaunchTemplateName:
-        !Sub immich-db-od-${Environment}
+        !Sub immich-db-cache-od
 
       LaunchTemplateData:
 
@@ -305,11 +327,19 @@ Resources:
 
         InstanceType: !Ref InstanceType
 
+        KeyName: !If
+          - HasKey
+          - !Ref KeyPair
+          - !Ref AWS::NoValue
+
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            SubnetId: !Ref PrivateSubnetId
+            Groups:
+              - !Ref DBCacheSecurityGroup
+
         IamInstanceProfile:
           Arn: !GetAtt DbInstanceProfile.Arn
-
-        SecurityGroupIds:
-          - !Ref DbSecurityGroup
 
         MetadataOptions:
           HttpTokens: required
@@ -320,19 +350,7 @@ Resources:
 
             Tags:
               - Key: Name
-                Value: !Sub immich-db-od-${Environment}
-
-              - Key: Role
-                Value: postgres
-
-              - Key: Type
-                Value: ondemand
-
-              - Key: Application
-                Value: immich
-
-              - Key: Environment
-                Value: !Ref Environment
+                Value: !Sub immich-db-cache-od
 
         UserData:
           Fn::Base64:
@@ -381,35 +399,35 @@ Resources:
               # Immich postgres image runs as uid 999
               mkdir -p /data/postgres/data
               chown -R 999:999 /data/postgres
-
-
-
-              # ── 4. Parse credentials from SSM ──────────────────────────────────
-              # SSM value format: user=username,password=password,db=immich_db
-              SSM_VALUE=$(aws ssm get-parameter \
-                --name ${CredentialSSMName} \
-                --with-decryption \
-                --query "Parameter.Value" \
-                --output text)
-
-              DB_USER=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^user=' | cut -d= -f2)
-              DB_PASS=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^password=' | cut -d= -f2)
-              DB_NAME=$(echo "$SSM_VALUE" | tr ',' '\n' | grep '^db=' | cut -d= -f2)
             
-              if [ -z "$DB_USER" ] || [ -z "$DB_PASS" ] || [ -z "$DB_NAME" ]; then
-                echo "ERROR: Failed to parse one or more credentials from SSM value."
-                echo "Expected format: user=x,password=y,db=z"
-                exit 1
-              fi
+              mkdir -p /data/valkey
+              chown -R 999:999 /data/valkey
+            
+              echo "Required files made"
 
-              echo "Parsed credentials — user=$DB_USER, db=$DB_NAME"
+              # ── 4. Parse env from S3 ──────────────────────────────────
             
+              aws s3 cp "${EnvFileS3URI}" ./var.env
+              source ./var.env
+              
+              DB_USER=$DB_USERNAME
+              DB_PASS=$DB_PASSWORD
+              DB_NAME=$DB_DATABASE_NAME
             
-              # ── 5. Pull Immich Postgres image ──────────────────────────────────
-              echo "Pulling docker file"
-              docker pull ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
+              echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
+              
+      
+              # ── 5. Pull Immich Postgres and Valkey image from S3 ──────────────────────────────────
+              echo "Downloading images"
             
-              # ── 6. Systemd service for lifecycle management ────────────────────────────────────────
+              aws s3 cp ${ImageLocationS3Uri}/valkey.tar .
+              docker load -i valkey.tar
+            
+              aws s3 cp ${ImageLocationS3Uri}/postgres.tar .
+              docker load -i postgres.tar
+              
+            
+              # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
 
               cat >/etc/systemd/system/immich-db.service <<EOF
               [Unit]
@@ -432,7 +450,7 @@ Resources:
                 -e POSTGRES_PASSWORD="$DB_PASS" \
                 -e POSTGRES_DB="$DB_NAME" \
                 -v /data/postgres/data:/var/lib/postgresql/data \
-                ghcr.io/immich-app/postgres:${ImmichPostgresVersion}
+                ghcr.io/immich-app/postgres:14-vectorchord0.4.3
 
               ExecStop=/usr/bin/docker stop -t 60 immich-postgres
               ExecStopPost=/usr/bin/sync
@@ -445,4 +463,40 @@ Resources:
               systemctl daemon-reload
               systemctl enable immich-db.service
               systemctl start immich-db.service
+            
+              # ── 7. Systemd service for lifecycle management for cache ────────────────────────────────────────
+              
+              cat >/etc/systemd/system/valkey.service <<'EOF'
+              [Unit]
+              Description=Valkey Cache
+              Requires=docker.service
+              After=docker.service
+              
+              [Service]
+              Type=simple
+              Restart=always
+              RestartSec=5
+              
+              ExecStartPre=-/usr/bin/docker rm -f valkey-server
+              
+              ExecStart=/usr/bin/docker run \
+                --name valkey-server \
+                --restart always \
+                -p 6379:6379 \
+                -v /data/valkey:/data \
+                valkey/valkey:9 \
+                valkey-server --save 900 1 --appendonly yes
+              
+              ExecStop=/usr/bin/docker stop -t 20 valkey-server
+              
+              ExecStopPost=-/usr/bin/docker rm -f valkey-server
+              
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+              
+              systemctl daemon-reload
+              systemctl enable valkey.service
+              systemctl start valkey.service
+            
               echo "INIT Success"

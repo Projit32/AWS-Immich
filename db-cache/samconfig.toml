@@ -12,8 +12,8 @@ version = 0.1
 
 # ── EBS Stack ─────────────────────────────────────────────────────────────────
 [ebs.deploy.parameters]
-stack_name        = "immich-db-ebs-prod"
-template_file     = "immich-db-ebs.yaml"
+stack_name        = "immich-db-cache-ebs"
+template_file     = "immich-db-cache-ebs.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
@@ -22,46 +22,42 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "AvailabilityZone=us-east-1a",
   "VolumeSize=30",
-  "BackupRetentionDays=7",
-  "Environment=prod"
+  "BackupRetentionDays=7"
 ]
 
 # Tags applied to all resources in the stack
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]
 
 # ── EC2 Template Stack ─────────────────────────────────────────────────────────────────
 [ec2.deploy.parameters]
-stack_name        = "immich-db-ec2-prod"
-template_file     = "immich-db-ec2.yaml"
+stack_name        = "immich-db-cache-ec2"
+template_file     = "immich-db-cache-ec2.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-0ba8dc166b641aa2b",
+  "VpcId=vpc-02cab24e4cec51cb5",
   "InstanceType=t4g.small",
-  "ImmichPostgresVersion=14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
-  "AllowedCIDR=0.0.0.0/0",              # Tighten this to your actual VPC CIDR
-  "Environment=prod",
-  "CredentialSSMName=/immich/conf/db"
+  "AllowedCIDR=10.0.0.0/16",              # Tighten this to your actual VPC CIDR
+  "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env",
+  "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images",
+  "KeyPair=Test",
+  "PrivateSubnetId=subnet-017bae2cb00a4e949"
 ]
 
 # Tags applied to all resources in the stack
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]
 
 # ── Lambda Stack ─────────────────────────────────────────────────────────────────
 [handlers.deploy.parameters]
-stack_name        = "immich-db-handlers"
-template_file     = "immich-db-handlers.yaml"
+stack_name        = "immich-spot-handlers"
+template_file     = "immich-spot-handlers.yaml"
 region            = "us-east-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
@@ -80,7 +76,5 @@ parameter_overrides = [
 
 # Tags applied to all resources in the stack
 tags = [
-  "Project=immich",
-  "Environment=prod",
-  "ManagedBy=sam"
+  "Project=immich"
 ]

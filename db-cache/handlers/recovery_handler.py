@@ -10,7 +10,7 @@ ssm = boto3.client("ssm")
 events = boto3.client("events")
 
 VOLUME_ID = os.environ["VOLUME_ID"]
-OD_LAUNCH_TEMPLATE_ID = os.environ["OD_LAUNCH_TEMPLATE_ID"]
+SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
 
 HOSTED_ZONE_ID = os.environ["HOSTED_ZONE_ID"]
 RECORD_NAME = os.environ["RECORD_NAME"]
@@ -19,100 +19,109 @@ STATE_PARAMETER = os.environ["STATE_PARAMETER"]
 RESTORE_RULE_NAME = os.environ["RESTORE_RULE_NAME"]
 
 SUBNET_ID = os.environ["SUBNET_ID"]
-SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
 
 INSTANCE_STATUS_TIMEOUT = 600
-VOLUME_TIMEOUT = 120
+VOLUME_TIMEOUT = 600
 
 
 def lambda_handler(event, context):
 
-    print("=== Spot Failover Lambda Started ===")
+    print("=== Restore Lambda Started ===")
     print(json.dumps(event))
 
     state = get_state()
 
-    if state.get("state") == "OD_ACTIVE":
-        print("Already failed over. Nothing to do.")
+    if state.get("state") != "OD_ACTIVE":
+        print("OD is not active. Nothing to restore.")
+
         return {
-            "status": "already-failed-over"
+            "status": "nothing-to-do"
         }
 
-    update_state("FAILOVER_IN_PROGRESS")
+    od_instance_id = state.get("activeInstanceId")
 
-    spot_instance_id = get_spot_instance_from_event(event)
+    if not od_instance_id:
+        raise Exception(
+            "activeInstanceId missing from state"
+        )
 
-    #
-    # Launch replacement first
-    #
-    od_instance_id = launch_ondemand_instance()
-
-    wait_for_instance_running(od_instance_id)
+    update_state("RESTORE_IN_PROGRESS")
 
     #
-    # Now terminate the spot instance
+    # Launch Spot first
     #
-    terminate_instance(spot_instance_id)
+    spot_instance_id = launch_spot_instance()
 
-    wait_for_instance_terminated(spot_instance_id)
-
-    #
-    # Wait until EBS detaches
-    #
-    wait_for_volume_available(VOLUME_ID)
+    wait_for_instance_running(
+        spot_instance_id
+    )
 
     #
-    # Attach EBS to OD
+    # Terminate OD instance
+    #
+    terminate_instance(
+        od_instance_id
+    )
+
+    wait_for_instance_terminated(
+        od_instance_id
+    )
+
+    #
+    # Wait for EBS detach
+    #
+    wait_for_volume_available(
+        VOLUME_ID
+    )
+
+    #
+    # Attach EBS to Spot
     #
     attach_volume(
-        instance_id=od_instance_id,
+        instance_id=spot_instance_id,
         volume_id=VOLUME_ID
     )
 
     #
-    # Wait until userdata mounts volume
-    # and postgres is ready
+    # Wait until Spot instance is healthy
     #
-    wait_for_instance_status_ok(od_instance_id)
-
-    private_ip = get_ip(od_instance_id)
-
-    update_dns(private_ip)
-
-    enable_restore_rule()
-
-    update_state(
-        state="OD_ACTIVE",
-        instance_id=od_instance_id
+    wait_for_instance_status_ok(
+        spot_instance_id
     )
 
-    print("=== Failover Completed Successfully ===")
+    private_ip = get_ip(
+        spot_instance_id
+    )
+
+    update_dns(
+        private_ip
+    )
+
+    disable_restore_rule()
+
+    update_state(
+        state="SPOT_ACTIVE",
+        instance_id=spot_instance_id
+    )
+
+    print("=== Restore Completed Successfully ===")
 
     return {
         "status": "success",
-        "instanceId": od_instance_id,
+        "instanceId": spot_instance_id,
         "publicIp": private_ip
     }
 
 
-def get_spot_instance_from_event(event):
-
-    return event["detail"]["instance-id"]
-
-
 def get_state():
 
-    try:
-        response = ssm.get_parameter(
-            Name=STATE_PARAMETER
-        )
+    response = ssm.get_parameter(
+        Name=STATE_PARAMETER
+    )
 
-        return json.loads(
-            response["Parameter"]["Value"]
-        )
-
-    except Exception:
-        return {}
+    return json.loads(
+        response["Parameter"]["Value"]
+    )
 
 
 def update_state(state, instance_id=""):
@@ -131,11 +140,12 @@ def update_state(state, instance_id=""):
     )
 
 
-def launch_ondemand_instance():
+def launch_spot_instance():
 
     response = ec2.run_instances(
         LaunchTemplate={
-            "LaunchTemplateId": OD_LAUNCH_TEMPLATE_ID
+            "LaunchTemplateId": SPOT_LAUNCH_TEMPLATE_ID,
+            "Version": "$Latest"
         },
         SubnetId=SUBNET_ID,
         MinCount=1,
@@ -145,7 +155,7 @@ def launch_ondemand_instance():
     instance_id = response["Instances"][0]["InstanceId"]
 
     print(
-        f"OnDemand instance launched: {instance_id}"
+        f"Spot instance launched: {instance_id}"
     )
 
     return instance_id
@@ -153,16 +163,24 @@ def launch_ondemand_instance():
 
 def terminate_instance(instance_id):
 
-    print(f"Terminating instance: {instance_id}")
+    print(
+        f"Terminating instance: {instance_id}"
+    )
 
-    ec2.terminate_instances(InstanceIds=[instance_id])
+    ec2.terminate_instances(
+        InstanceIds=[instance_id]
+    )
 
 
 def wait_for_instance_running(instance_id):
 
-    print(f"Waiting for {instance_id} running")
+    print(
+        f"Waiting for {instance_id} running"
+    )
 
-    waiter = ec2.get_waiter("instance_running")
+    waiter = ec2.get_waiter(
+        "instance_running"
+    )
 
     waiter.wait(
         InstanceIds=[instance_id],
@@ -172,14 +190,20 @@ def wait_for_instance_running(instance_id):
         }
     )
 
-    print(f"{instance_id} is running")
+    print(
+        f"{instance_id} is running"
+    )
 
 
 def wait_for_instance_terminated(instance_id):
 
-    print(f"Waiting for {instance_id} termination")
+    print(
+        f"Waiting for {instance_id} termination"
+    )
 
-    waiter = ec2.get_waiter("instance_terminated")
+    waiter = ec2.get_waiter(
+        "instance_terminated"
+    )
 
     waiter.wait(
         InstanceIds=[instance_id],
@@ -189,7 +213,9 @@ def wait_for_instance_terminated(instance_id):
         }
     )
 
-    print(f"{instance_id} terminated")
+    print(
+        f"{instance_id} terminated"
+    )
 
 
 def wait_for_volume_available(volume_id):
@@ -204,14 +230,23 @@ def wait_for_volume_available(volume_id):
 
         state = volume["State"]
 
-        print(f"Volume state: {state}")
+        print(
+            f"Volume state: {state}"
+        )
 
         if state == "available":
-            print(f"{volume_id} is available")
+            print(
+                f"{volume_id} available"
+            )
             return
 
-        if time.time() - start > VOLUME_TIMEOUT:
-            raise TimeoutError(f"Volume {volume_id} did not become available")
+        if (
+            time.time() - start
+            > VOLUME_TIMEOUT
+        ):
+            raise TimeoutError(
+                f"{volume_id} did not become available"
+            )
 
         time.sleep(5)
 
@@ -219,7 +254,7 @@ def wait_for_volume_available(volume_id):
 def attach_volume(instance_id, volume_id):
 
     print(
-        f"Attaching volume {volume_id} to instance {instance_id}"
+        f"Attaching {volume_id} -> {instance_id}"
     )
 
     ec2.attach_volume(
@@ -228,9 +263,13 @@ def attach_volume(instance_id, volume_id):
         Device="/dev/xvdbb"
     )
 
-    wait_for_volume_in_use(volume_id)
+    wait_for_volume_in_use(
+        volume_id
+    )
 
-    print("Volume attached")
+    print(
+        "Volume attached"
+    )
 
 
 def wait_for_volume_in_use(volume_id):
@@ -249,13 +288,17 @@ def wait_for_volume_in_use(volume_id):
 
 def wait_for_instance_status_ok(instance_id):
 
-    print(f"Waiting for EC2 status checks on {instance_id}")
+    print(
+        f"Waiting for EC2 status checks: {instance_id}"
+    )
 
     start = time.time()
 
     while True:
 
-        response = ec2.describe_instance_status(InstanceIds=[instance_id])
+        response = ec2.describe_instance_status(
+            InstanceIds=[instance_id]
+        )
 
         statuses = response.get(
             "InstanceStatuses",
@@ -282,11 +325,18 @@ def wait_for_instance_status_ok(instance_id):
             )
 
             if system_ok and instance_ok:
-                print("Status checks passed")
+                print(
+                    "Status checks passed"
+                )
                 return
 
-        if time.time() - start > INSTANCE_STATUS_TIMEOUT:
-            raise TimeoutError(f"Status checks timed out for {instance_id}")
+        if (
+            time.time() - start
+            > INSTANCE_STATUS_TIMEOUT
+        ):
+            raise TimeoutError(
+                f"Status checks timed out for {instance_id}"
+            )
 
         time.sleep(10)
 
@@ -300,7 +350,7 @@ def get_ip(instance_id):
     return (
         response["Reservations"][0]
         ["Instances"][0]
-        ["PrivateIpAddress"]
+        ["PublicIpAddress"]
     )
 
 
@@ -313,7 +363,7 @@ def update_dns(ip_address):
     route53.change_resource_record_sets(
         HostedZoneId=HOSTED_ZONE_ID,
         ChangeBatch={
-            "Comment": "Immich PostgreSQL Failover",
+            "Comment": "Immich PostgreSQL-Cache Restore",
             "Changes": [
                 {
                     "Action": "UPSERT",
@@ -337,56 +387,16 @@ def update_dns(ip_address):
     )
 
 
-def enable_restore_rule():
+def disable_restore_rule():
 
     print(
-        f"Enabling restore rule: {RESTORE_RULE_NAME}"
+        f"Disabling restore rule: {RESTORE_RULE_NAME}"
     )
 
-    events.enable_rule(
+    events.disable_rule(
         Name=RESTORE_RULE_NAME
     )
 
     print(
-        "Restore rule enabled"
-    )
-
-def validate_spot_instance(instance_id):
-
-    response = ec2.describe_instances(
-        InstanceIds=[instance_id]
-    )
-
-    instance = (
-        response["Reservations"][0]
-        ["Instances"][0]
-    )
-
-    launch_template = instance.get(
-        "LaunchTemplate"
-    )
-
-    if not launch_template:
-        raise Exception(
-            f"{instance_id} was not launched from a launch template"
-        )
-
-    actual_lt_id = launch_template[
-        "LaunchTemplateId"
-    ]
-
-    if actual_lt_id != SPOT_LAUNCH_TEMPLATE_ID:
-
-        print(
-            f"Ignoring interruption event. "
-            f"Expected LT={SPOT_LAUNCH_TEMPLATE_ID}, "
-            f"Actual LT={actual_lt_id}"
-        )
-
-        raise Exception(
-            "Not the database spot instance"
-        )
-
-    print(
-        f"Validated DB spot instance {instance_id}"
+        "Restore rule disabled"
     )

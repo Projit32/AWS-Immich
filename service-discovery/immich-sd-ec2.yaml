@@ -122,6 +122,10 @@ Resources:
 
       IamInstanceProfile: !Ref TraefikInstanceProfile
 
+      Tags:
+        - Key: Name
+          Value: !Sub Traefik
+
       KeyName: !If
         - HasKey
         - !Ref KeyPair
@@ -158,9 +162,9 @@ Resources:
           aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
           docker load -i traefik.tar
           
-          cat >/etc/systemd/system/treafik.service <<'EOF'
+          cat >/etc/systemd/system/traefik.service <<'EOF'
           [Unit]
-          Description=Treafik
+          Description=Traefik
           Requires=docker.service
           After=docker.service
 
@@ -194,8 +198,8 @@ Resources:
           EOF
 
           systemctl daemon-reload
-          systemctl enable treafik.service
-          systemctl start treafik.service
+          systemctl enable traefik.service
+          systemctl start traefik.service
 
 Outputs:
 

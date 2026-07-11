@@ -22,6 +22,15 @@ Parameters:
   EnvFileS3Arn:
     Type: String
 
+  HostName:
+    Type: String
+
+  AllowedCIDR:
+    Type: String
+    Default: 10.0.0.0/8
+    Description: >
+      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
+
 Resources:
 
   ECSCluster:
@@ -46,15 +55,26 @@ Resources:
     Properties:
       GroupDescription: Immich ECS Hosts
       VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
 
-  ApiIngress2283:
-    Type: AWS::EC2::SecurityGroupIngress
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupId: !Ref HostSecurityGroup
-      IpProtocol: tcp
-      FromPort: 2283
-      ToPort: 2283
-      CidrIp: 0.0.0.0/0
+      GroupDescription: Immich ECS Task
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2283
+          ToPort: 2283
+          CidrIp: !Ref AllowedCIDR
+          Description: Allow connection to APP
 
   S3FilesIngressRule:
     Type: AWS::EC2::SecurityGroupIngress
@@ -169,6 +189,7 @@ Resources:
       MaxSize: "3"
       DesiredCapacity: "0"
       VPCZoneIdentifier: !Ref SubnetIds
+      NewInstancesProtectedFromScaleIn: true
       MixedInstancesPolicy:
         InstancesDistribution:
           OnDemandPercentageAboveBaseCapacity: 0
@@ -178,8 +199,8 @@ Resources:
             LaunchTemplateId: !Ref ApiLaunchTemplate
             Version: !GetAtt ApiLaunchTemplate.LatestVersionNumber
           Overrides:
+            - InstanceType: t4g.micro
             - InstanceType: t4g.small
-            - InstanceType: t4g.medium
 
   WorkerASG:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -188,6 +209,7 @@ Resources:
       MaxSize: "3"
       DesiredCapacity: "0"
       VPCZoneIdentifier: !Ref SubnetIds
+      NewInstancesProtectedFromScaleIn: true
       MixedInstancesPolicy:
         InstancesDistribution:
           OnDemandPercentageAboveBaseCapacity: 0
@@ -197,15 +219,15 @@ Resources:
             LaunchTemplateId: !Ref WorkerLaunchTemplate
             Version: !GetAtt WorkerLaunchTemplate.LatestVersionNumber
           Overrides:
-            - InstanceType: t4g.xlarge
-            - InstanceType: c6g.xlarge
-            - InstanceType: c7g.xlarge
-            - InstanceType: c8g.xlarge
+            - InstanceType: c6g.large
+            - InstanceType: c7g.large
+            - InstanceType: c8g.large
 
   ApiCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
       AutoScalingGroupProvider:
+        ManagedTerminationProtection: ENABLED
         AutoScalingGroupArn: !Ref ApiASG
         ManagedScaling:
           Status: ENABLED
@@ -217,6 +239,7 @@ Resources:
     Type: AWS::ECS::CapacityProvider
     Properties:
       AutoScalingGroupProvider:
+        ManagedTerminationProtection: ENABLED
         AutoScalingGroupArn: !Ref WorkerASG
         ManagedScaling:
           Status: ENABLED
@@ -255,6 +278,11 @@ Resources:
           Essential: true
           Cpu: 1024
           Memory: 756
+          DockerLabels:
+            traefik.enable: "true"
+            traefik.http.routers.immich-api.rule: !Sub "Host(`${HostName}`)" # Replace with your domain
+            traefik.http.routers.immich-api.entrypoints: "web"                  # Matches Traefik's entrypoint config
+            traefik.http.services.immich-api.loadbalancer.server.port: "2283"    # The internal container port
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -280,8 +308,8 @@ Resources:
       Family: immich-microservices
       NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
-      Cpu: 3072
-      Memory: 6144
+      Cpu: 2048
+      Memory: 3584
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
         - Name: uploads
@@ -291,8 +319,8 @@ Resources:
         - Name: immich-microservices
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
-          Cpu: 3072
-          Memory: 6144
+          Cpu: 2048
+          Memory: 3584
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -316,6 +344,10 @@ Resources:
     Properties:
       Cluster: !Ref ECSCluster
       DesiredCount: 0
+      AvailabilityZoneRebalancing: DISABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
       CapacityProviderStrategy:
         - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
@@ -324,7 +356,7 @@ Resources:
         AwsvpcConfiguration:
           Subnets: !Ref SubnetIds
           SecurityGroups:
-            - !Ref HostSecurityGroup
+            - !Ref TaskSecurityGroup
 
   WorkerService:
     Type: AWS::ECS::Service
@@ -333,6 +365,10 @@ Resources:
     Properties:
       Cluster: !Ref ECSCluster
       DesiredCount: 0
+      AvailabilityZoneRebalancing: DISABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
       CapacityProviderStrategy:
         - CapacityProvider: !Ref WorkerCapacityProvider
           Weight: 1
@@ -341,7 +377,7 @@ Resources:
         AwsvpcConfiguration:
           Subnets: !Ref SubnetIds
           SecurityGroups:
-            - !Ref HostSecurityGroup
+            - !Ref TaskSecurityGroup
 
 Outputs:
   ClusterName:

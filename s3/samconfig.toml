@@ -12,7 +12,7 @@ parameter_overrides = [
   "VpcId=vpc-02cab24e4cec51cb5",
   "SubnetId=subnet-017bae2cb00a4e949",
   "BucketName=immich-media",
-  "IntelligentTieringDays=60",
+  "IntelligentTieringDays=15",
 ]
 
 tags = [
