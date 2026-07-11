@@ -14,7 +14,7 @@ docker run -d \
   ghcr.io/immich-app/immich-server:release
 
 
-  docker run -d \
+docker run -d \
   --name immich-microservices \
   --restart unless-stopped \
   -e DB_HOSTNAME=44.197.3.132 \
@@ -41,3 +41,38 @@ docker run -d \
   -e REDIS_PORT=6379 \
   -v /mnt/immich/uploads:/usr/src/app/upload \
   ghcr.io/immich-app/immich-server:release
+
+
+
+docker run -d \
+  --name valkey \
+  -p 6379:6379 \
+  valkey/valkey:9
+
+
+docker buildx build \
+  --platform linux/arm64 \
+  -t valkey/valkey:9 \
+  --load .
+
+
+docker run -d \
+  --name valkey-server \
+  --restart always \
+  -p 6379:6379 \
+  -v /data/valkey:/data \
+  --cpus="0.5" \
+  --memory="512m" \
+  valkey/valkey:latest \
+  valkey-server --save 900 1 --save 300 10 --save 60 10000 --appendonly yes
+
+
+docker run \
+  --name postgres \
+  --restart=no \
+  -p 5432:5432 \
+  -e POSTGRES_USER=immich \
+  -e POSTGRES_PASSWORD=Agentppp32 \
+  -e POSTGRES_DB=immich \
+  -v /home/ec2-user/db/data:/var/lib/postgresql/data \
+  ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
