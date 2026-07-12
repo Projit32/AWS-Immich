@@ -14,7 +14,8 @@ parameter_overrides = [
   "SubnetId=subnet-0f05fbb3404eabb19",
   "BucketName=immich-conf-us-east-1-704678691702",
   "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images",
-  "InstanceType=t4g.micro"
+  "InstanceType=t4g.micro",
+  "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env"
 ]
 
 tags = [

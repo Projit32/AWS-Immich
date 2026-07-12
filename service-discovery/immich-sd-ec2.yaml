@@ -23,6 +23,9 @@ Parameters:
   ImageLocationS3Uri:
     Type: String
 
+  EnvFileS3URI:
+    Type: String
+
 Conditions:
   HasKey: !Not [!Equals [!Ref KeyPair, ""]]
 
@@ -158,6 +161,9 @@ Resources:
           until systemctl is-active --quiet docker; do
             sleep 2
           done
+          
+          mkdir -p /opt/scheduler
+          aws s3 cp "${EnvFileS3URI}" /opt/scheduler/var.env
         
           aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
           docker load -i traefik.tar
@@ -206,8 +212,8 @@ Outputs:
   InstanceId:
     Value: !Ref TraefikInstance
 
-  PrivateIp:
-    Value: !GetAtt TraefikInstance.PrivateIp
+  PublicIp:
+    Value: !GetAtt TraefikInstance.PublicIp
 
   AvailabilityZone:
     Value: !GetAtt TraefikInstance.AvailabilityZone
