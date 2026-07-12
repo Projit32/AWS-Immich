@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich Valkey Traefik EC2 Instance
+Description: Immich Valkey Traefik EC2 Instance with CloudFront CDN & SSL Security
 
 Parameters:
 
@@ -29,15 +29,29 @@ Parameters:
   EnvFileS3URI:
     Type: String
 
+  # --- NEW PARAMETERS FOR SSL & ROUTE 53 ---
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: The Route 53 Public Hosted Zone ID for your domain.
+
+  DomainName:
+    Type: String
+    Description: The fully qualified domain name for the application (e.g., app.yourdomain.com).
+
+  CloudFrontPrefixListId:
+    Type: String
+    Description: The CloudFront Managed Prefix List ID for your deployment region (e.g., pl-3b927552 for us-east-1).
+
 Conditions:
-  HasKey: !Not [!Equals [!Ref KeyPair, ""]]
+  HasKey: !Not [!Equals [!Ref KeyPair, ""] ]
 
 Resources:
 
+  # --- UPDATED LOCKED DOWN SECURITY GROUP ---
   TraefikSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security Group for Traefik
+      GroupDescription: Security Group for Traefik - Protected by CloudFront
       VpcId: !Ref VpcId
 
       SecurityGroupIngress:
@@ -45,22 +59,100 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-          Description: SSH access
+          Description: SSH access (Restrict this CIDR in production if possible)
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: Traefik EntryPoint
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+          Description: Restrict inbound HTTP access exclusively to CloudFront Edge nodes
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
           CidrIp: 0.0.0.0/0
-          Description: Traefik Dashboard
+          Description: Traefik Dashboard (Keep open or restrict to your IP as needed)
 
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
+  # --- NEW ACM CERTIFICATE RESOURCE ---
+  ACMCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
 
+  # --- NEW CLOUDFRONT ORIGIN REQUEST POLICY (FOR HOST HEADER FORWARDING) ---
+  CloudFrontOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "${AWS::StackName}-ForwardHostHeaderPolicy"
+        Comment: Passes required validation headers to downstream Traefik and Immich
+        HeadersConfig:
+          HeaderBehavior: whitelist
+          Headers:
+            - Host
+            - Origin
+            - Referer
+            - Authorization
+            - x-api-key
+        CookiesConfig:
+          CookieBehavior: all
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  # --- NEW CLOUDFRONT DISTRIBUTION ---
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Aliases:
+          - !Ref DomainName
+        Origins:
+          - Id: EC2BackendOrigin
+            DomainName: !GetAtt TraefikInstance.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+            # --- ADD THIS BLOCK TO FIX PROTOCOL MISMATCH ---
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          TargetOriginId: EC2BackendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+          OriginRequestPolicyId: !Ref CloudFrontOriginRequestPolicy
+        ViewerCertificate:
+          AcmCertificateArn: !Ref ACMCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+
+  # --- NEW ROUTE 53 ALIAS RECORD POINTING TO CLOUDFRONT ---
+  Route53Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2 # The universal static Canonical Hosted Zone ID for all CloudFront Distributions
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+
+  # --- YOUR EXISTING IAM CONFIGURATION ---
   TraefikInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -142,6 +234,7 @@ Resources:
       Roles:
         - !Ref TraefikInstanceRole
 
+  # --- YOUR EXISTING EC2 INSTANCE DEFINITION ---
   TraefikInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -229,6 +322,7 @@ Resources:
             --providers.ecs.region=us-east-1 \
             --providers.ecs.exposedByDefault=false \
             --entrypoints.web.address=:80
+            --entrypoints.web.forwardedheaders.insecure=true
 
           ExecStop=/usr/bin/docker stop -t 20 traefik
 
@@ -268,3 +362,11 @@ Outputs:
 
   Role:
     Value: !Ref TraefikInstanceRole
+
+  CloudFrontDomainName:
+    Description: The public facing domain for your CloudFront distribution
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  ApplicationURL:
+    Description: Your secure application endpoint
+    Value: !Sub "https://${DomainName}"

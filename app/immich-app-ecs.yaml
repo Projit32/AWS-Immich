@@ -265,7 +265,7 @@ Resources:
       Family: immich-api
       NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
-      Cpu: 1024
+      Cpu: 2048
       Memory: 756
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
@@ -276,7 +276,7 @@ Resources:
         - Name: immich-api
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
-          Cpu: 1024
+          Cpu: 2048
           Memory: 756
           DockerLabels:
             traefik.enable: "true"

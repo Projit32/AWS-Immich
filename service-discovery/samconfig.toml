@@ -16,7 +16,10 @@ parameter_overrides = [
   "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images",
   "InstanceType=t4g.micro",
   "CronScriptsS3URI=s3://immich-conf-us-east-1-704678691702/scripts",
-  "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env"
+  "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env",
+  "HostedZoneId=Z0716017FNQSL38BA6TG",
+  "DomainName=immich.proapplication.net",
+  "CloudFrontPrefixListId=pl-3b927c52"
 ]
 
 tags = [
