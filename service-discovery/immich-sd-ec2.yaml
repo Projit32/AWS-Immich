@@ -23,6 +23,9 @@ Parameters:
   ImageLocationS3Uri:
     Type: String
 
+  CronScriptsS3URI:
+    Type: String
+
   EnvFileS3URI:
     Type: String
 
@@ -108,6 +111,30 @@ Resources:
                   - "ecs:DescribeTaskDefinition"
                   - "ec2:DescribeInstances"
                 Resource: "*"
+        - PolicyName: ssm-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: "*"
+
+        - PolicyName: ecs-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:ListServices
+                  - ecs:UpdateService
+                Resource: "*"
 
   TraefikInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -162,9 +189,17 @@ Resources:
             sleep 2
           done
           
-          mkdir -p /opt/scheduler
-          aws s3 cp "${EnvFileS3URI}" /opt/scheduler/var.env
-        
+          dnf install valkey cronie -y
+          systemctl enable --now crond
+          
+          mkdir -p /opt/scheduled
+          aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
+          chmod +x /opt/scheduled/microservice-cache-check.sh
+          aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
+          chmod +x /opt/scheduled/ml-cache-check.sh
+          aws s3 cp "${EnvFileS3URI}" /opt/scheduled/var.env
+          source /opt/scheduled/var.env   
+                  
           aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
           docker load -i traefik.tar
           
@@ -206,6 +241,13 @@ Resources:
           systemctl daemon-reload
           systemctl enable traefik.service
           systemctl start traefik.service
+          
+          echo "Adding crontab entry"
+          echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $BACKEND_SSM_PARAM_NAME $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME $REDIS_HOSTNAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
+          crontab /tmp/mycrontab
+          
+          crontab -l 
+          echo "========= INIT COMPLETE ========"
 
 Outputs:
 

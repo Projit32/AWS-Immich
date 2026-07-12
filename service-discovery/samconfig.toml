@@ -15,6 +15,7 @@ parameter_overrides = [
   "BucketName=immich-conf-us-east-1-704678691702",
   "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images",
   "InstanceType=t4g.micro",
+  "CronScriptsS3URI=s3://immich-conf-us-east-1-704678691702/scripts",
   "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env"
 ]
 

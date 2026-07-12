@@ -343,6 +343,7 @@ Resources:
       - ClusterCapacityProviders
     Properties:
       Cluster: !Ref ECSCluster
+      ServiceName: "immich-api-service" # This sets the name
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
       DeploymentConfiguration:
@@ -363,6 +364,7 @@ Resources:
     DependsOn:
       - ClusterCapacityProviders
     Properties:
+      ServiceName: "immich-worker-service" # This sets the name
       Cluster: !Ref ECSCluster
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
@@ -382,3 +384,9 @@ Resources:
 Outputs:
   ClusterName:
     Value: !Ref ECSCluster
+
+  ApiServiceName:
+    Value: !Ref ApiService
+
+  WorkerServiceName:
+    Value: !Ref WorkerService
