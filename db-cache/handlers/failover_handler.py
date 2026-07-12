@@ -8,6 +8,8 @@ ec2 = boto3.client("ec2")
 route53 = boto3.client("route53")
 ssm = boto3.client("ssm")
 events = boto3.client("events")
+ecs = boto3.client("ecs")
+
 
 VOLUME_ID = os.environ["VOLUME_ID"]
 OD_LAUNCH_TEMPLATE_ID = os.environ["OD_LAUNCH_TEMPLATE_ID"]
@@ -18,8 +20,10 @@ RECORD_NAME = os.environ["RECORD_NAME"]
 STATE_PARAMETER = os.environ["STATE_PARAMETER"]
 RESTORE_RULE_NAME = os.environ["RESTORE_RULE_NAME"]
 
-SUBNET_ID = os.environ["SUBNET_ID"]
 SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
+
+ECS_CLUSTER_NAME = os.environ["ECS_CLUSTER_NAME"]
+
 
 INSTANCE_STATUS_TIMEOUT = 600
 VOLUME_TIMEOUT = 120
@@ -43,6 +47,9 @@ def lambda_handler(event, context):
     spot_instance_id = get_spot_instance_from_event(event)
     validate_spot_instance(spot_instance_id)
 
+    # Turn of ECS services
+    awitch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+                                 desired_count=0)
     #
     # Launch replacement first
     #
@@ -88,6 +95,9 @@ def lambda_handler(event, context):
     )
 
     print("=== Failover Completed Successfully ===")
+    # Turn of ECS services
+    awitch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+                                 desired_count=1)
 
     return {
         "status": "success",
@@ -139,7 +149,6 @@ def launch_ondemand_instance():
             "LaunchTemplateId": OD_LAUNCH_TEMPLATE_ID,
             "Version": "$Latest"
         },
-        SubnetId=SUBNET_ID,
         MinCount=1,
         MaxCount=1
     )
@@ -364,25 +373,20 @@ def validate_spot_instance(instance_id):
         ["Instances"][0]
     )
 
-    launch_template = instance.get(
-        "LaunchTemplate"
-    )
+    tags = {tag['Key']: tag['Value'] for tag in instance.get('Tags', [])}
+    launch_template = tags.get('aws:ec2launchtemplate:id')
 
     if not launch_template:
         raise Exception(
             f"{instance_id} was not launched from a launch template"
         )
 
-    actual_lt_id = launch_template[
-        "LaunchTemplateId"
-    ]
-
-    if actual_lt_id != SPOT_LAUNCH_TEMPLATE_ID:
+    if launch_template != SPOT_LAUNCH_TEMPLATE_ID:
 
         print(
             f"Ignoring interruption event. "
             f"Expected LT={SPOT_LAUNCH_TEMPLATE_ID}, "
-            f"Actual LT={actual_lt_id}"
+            f"Actual LT={launch_template}"
         )
 
         raise Exception(
@@ -392,3 +396,60 @@ def validate_spot_instance(instance_id):
     print(
         f"Validated DB spot instance {instance_id}"
     )
+
+def awitch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_tag_value: str, desired_count: int = 0):
+    """
+    Searches an AWS ECS cluster for services matching a specific tag
+    and sets their desired task count to 0.
+    """
+
+    print(f"Searching cluster '{cluster_name}' for services tagged {target_tag_key}={target_tag_value}...")
+
+    # Use paginator in case there are a large number of services
+    paginator = ecs.get_paginator('list_services')
+
+    try:
+        for page in paginator.paginate(cluster=cluster_name):
+            service_arns = page.get('serviceArns', [])
+
+            if not service_arns:
+                continue
+
+            # The describe_services API can only process 10 services at a time
+            for i in range(0, len(service_arns), 10):
+                batch_arns = service_arns[i:i + 10]
+
+                response = ecs.describe_services(
+                    cluster=cluster_name,
+                    services=batch_arns,
+                    include=['TAGS']  # Crucial for pulling tag data
+                )
+
+                for service in response.get('services', []):
+                    service_name = service['serviceName']
+                    current_count = service['desiredCount']
+                    tags = service.get('tags', [])
+
+                    # Check if the service contains our target tag
+                    has_matching_tag = any(
+                        tag['key'] == target_tag_key and tag['value'] == target_tag_value
+                        for tag in tags
+                    )
+
+                    if has_matching_tag:
+                        if current_count == desired_count:
+                            print(f"Service '{service_name}' is already at desiredCount={desired_count}. Skipping.")
+                            continue
+
+                        print(f"Scaling down service '{service_name}' (Current count: {current_count}) to {desired_count}...")
+
+                        # Update the service to turn it off
+                        ecs.update_service(
+                            cluster=cluster_name,
+                            service=service_name,
+                            desiredCount=desired_count
+                        )
+                        print(f"Successfully turned off '{service_name}'.")
+
+    except Exception as e:
+        print(f"An error occurred while interacting with AWS: {e}")

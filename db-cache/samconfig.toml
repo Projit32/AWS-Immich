@@ -66,12 +66,12 @@ resolve_s3 = true
 s3_prefix = "immich-db-handlers"
 
 parameter_overrides = [
-  "SpotLaunchTemplateId=lt-08b70e08ef206f73e",
-  "OnDemandLaunchTemplateId=lt-0bcc61d07db1a8efb",
-  "VolumeId=vol-05f56f243237172b7",
-  "HostedZoneId=Z0716017FNQSL38BA6TG",              # Tighten this to your actual VPC CIDR
-  "RecordName=db.immich.proapplication.net",
-  "SubnetId=subnet-05827c47b9a6e2a13",
+  "SpotLaunchTemplateId=lt-0e5ea6aab7d8f6752",
+  "OnDemandLaunchTemplateId=lt-00180f93f3c24b280",
+  "VolumeId=vol-0dc33a967715860ae",
+  "HostedZoneId=Z07936822CC6UP64WC1MP",              # Tighten this to your actual VPC CIDR
+  "RecordName=backend.immich.internal",
+  "ECSClusterName=immich-cluster"
 ]
 
 # Tags applied to all resources in the stack

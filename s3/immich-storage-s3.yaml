@@ -130,6 +130,13 @@ Resources:
       Bucket: !GetAtt ImmichBucket.Arn   # Must be ARN not bucket name
       RoleArn: !GetAtt S3FilesRole.Arn
       AcceptBucketWarning: true           # Required acknowledgement
+      SynchronizationConfiguration:
+        ExpirationDataRules:
+          - DaysAfterLastAccess: 10
+        ImportDataRules:
+          - Prefix: ""
+            SizeLessThan: 131072
+            Trigger: ON_DIRECTORY_FIRST_ACCESS
       Tags:
         - Key: Name
           Value: !Sub immich-fs

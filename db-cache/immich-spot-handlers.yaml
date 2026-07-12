@@ -24,9 +24,8 @@ Parameters:
     Type: String
     Default: /immich/db-cache/state
 
-  SubnetId:
-    Type: AWS::EC2::Subnet::Id
-    Description: Subnet for the EC2 instance.
+  ECSClusterName:
+    Type: String
 
 Globals:
 
@@ -112,6 +111,19 @@ Resources:
                 Action:
                   - ssm:GetParameter
                   - ssm:PutParameter
+                Resource: "*"
+
+        - PolicyName: ecs-control
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:ListServices
+                  - ecs:UpdateService
                 Resource: "*"
 
         - PolicyName: eventbridge-control
@@ -203,7 +215,7 @@ Resources:
 
           RESTORE_RULE_NAME: immich-db-cache-restore-rule
 
-          SUBNET_ID: !Ref SubnetId
+          ECS_CLUSTER_NAME: !Ref ECSClusterName
 
   FailoverLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'
@@ -245,7 +257,8 @@ Resources:
 
           RESTORE_RULE_NAME: immich-db-cache-restore-rule
 
-          SUBNET_ID: !Ref SubnetId
+          ECS_CLUSTER_NAME: !Ref ECSClusterName
+
 
   RecoveryLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'
