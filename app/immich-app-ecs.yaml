@@ -271,7 +271,7 @@ Resources:
       Volumes:
         - Name: uploads
           Host:
-            SourcePath: /mnt/immich
+            SourcePath: /mnt/immich/upload
       ContainerDefinitions:
         - Name: immich-api
           Image: ghcr.io/immich-app/immich-server:release
@@ -314,7 +314,7 @@ Resources:
       Volumes:
         - Name: uploads
           Host:
-            SourcePath: /mnt/immich
+            SourcePath: /mnt/immich/upload
       ContainerDefinitions:
         - Name: immich-microservices
           Image: ghcr.io/immich-app/immich-server:release

@@ -459,13 +459,13 @@ def awitch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_ta
 
                         print(f"Scaling down service '{service_name}' (Current count: {current_count}) to {desired_count}...")
 
-                        # Update the service to turn it off
+                        # Update the service
                         ecs.update_service(
                             cluster=cluster_name,
                             service=service_name,
                             desiredCount=desired_count
                         )
-                        print(f"Successfully turned off '{service_name}'.")
+                        print(f"Successfully switched '{service_name}'.")
 
     except Exception as e:
         print(f"An error occurred while interacting with AWS: {e}")

@@ -2,15 +2,15 @@ docker run -d \
   --name immich-api \
   --restart unless-stopped \
   -p 2283:2283 \
-  -e DB_HOSTNAME=44.197.3.132 \
+  -e DB_HOSTNAME=backend.immich.internal \
   -e DB_PORT=5432 \
   -e DB_USERNAME=immich \
-  -e DB_PASSWORD='SuperPassword^69' \
+  -e DB_PASSWORD='IamBatman!01' \
   -e DB_DATABASE_NAME=immich \
-  -e REDIS_HOSTNAME=192.168.1.19 \
+  -e REDIS_HOSTNAME=backend.immich.internal \
   -e REDIS_PORT=6379 \
   -e IMMICH_WORKERS_INCLUDE=api \
-  -v /Users/projit32/Desktop/uploads:/usr/src/app/upload \
+  -v /mnt/immich:/usr/src/app/upload \
   ghcr.io/immich-app/immich-server:release
 
 
