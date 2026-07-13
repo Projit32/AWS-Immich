@@ -3,14 +3,14 @@ version = 0.1
 [storage.deploy.parameters]
 stack_name        = "immich-storage-s3"
 template_file     = "immich-storage-s3.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-02cab24e4cec51cb5",
-  "SubnetId=subnet-017bae2cb00a4e949",
+  "VpcId=vpc-0d58eaa3d2dd95593",
+  "SubnetId=subnet-0cb74cba8880e488e",
   "BucketName=immich-media",
   "IntelligentTieringDays=15",
 ]
@@ -23,7 +23,7 @@ tags = [
 [conf.deploy.parameters]
 stack_name        = "immich-conf-s3"
 template_file     = "immich-conf-s3.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false

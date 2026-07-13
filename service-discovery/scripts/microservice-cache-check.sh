@@ -47,7 +47,7 @@ QUEUES=(
 for queue in "${QUEUES[@]}"; do
   WAIT=$(valkey-cli -h $CACHE_HOST LLEN immich_bull:$queue:wait 2>/dev/null || echo 0)
   PRIORITIZED=$(valkey-cli -h $CACHE_HOST ZCARD immich_bull:$queue:prioritized 2>/dev/null || echo 0)
-  ACTIVE=$(valkey-cli -h $CACHE_HOST ZCARD immich_bull:$queue:active 2>/dev/null || echo 0)
+  ACTIVE=$(valkey-cli -h $CACHE_HOST LLEN immich_bull:$queue:active 2>/dev/null || echo 0)
 
   TOTAL_JOBS=$((TOTAL_JOBS + WAIT + PRIORITIZED + ACTIVE))
 done

@@ -40,7 +40,11 @@ Parameters:
 
   CloudFrontPrefixListId:
     Type: String
-    Description: The CloudFront Managed Prefix List ID for your deployment region (e.g., pl-3b927552 for us-east-1).
+    Description: The CloudFront Managed Prefix List ID for your deployment region.
+
+  ACMCertificate:
+    Type: String
+    Description: ACM Certificate
 
 Conditions:
   HasKey: !Not [!Equals [!Ref KeyPair, ""] ]
@@ -70,16 +74,6 @@ Resources:
           ToPort: 8080
           CidrIp: 0.0.0.0/0
           Description: Traefik Dashboard (Keep open or restrict to your IP as needed)
-
-  # --- NEW ACM CERTIFICATE RESOURCE ---
-  ACMCertificate:
-    Type: AWS::CertificateManager::Certificate
-    Properties:
-      DomainName: !Ref DomainName
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          HostedZoneId: !Ref HostedZoneId
 
   # --- NEW CLOUDFRONT ORIGIN REQUEST POLICY (FOR HOST HEADER FORWARDING) ---
   CloudFrontOriginRequestPolicy:
@@ -314,12 +308,12 @@ Resources:
             --restart unless-stopped \
             -p 80:80 \
             -p 8080:8080 \
-            -e AWS_REGION=us-east-1 \
+            -e AWS_REGION=${AWS::Region} \
             traefik:latest \
             --api.insecure=true \
             --providers.ecs=true \
             --providers.ecs.clusters=immich-cluster \
-            --providers.ecs.region=us-east-1 \
+            --providers.ecs.region=${AWS::Region} \
             --providers.ecs.exposedByDefault=false \
             --entrypoints.web.address=:80
             --entrypoints.web.forwardedheaders.insecure=true

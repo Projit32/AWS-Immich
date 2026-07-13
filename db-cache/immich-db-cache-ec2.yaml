@@ -112,7 +112,7 @@ Resources:
       Type: String
       Value: |
         {
-          "state":"SPOT_ACTIVE",
+          "state":"OFF",
         }
 
   ###########################################################

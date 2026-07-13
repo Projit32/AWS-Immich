@@ -92,12 +92,13 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
-                  - s3:ListBucket
+                  - s3:GetObject*
+                  - s3:PutObject*
+                  - s3:DeleteObject*
+                  - s3:List*
                   - s3:GetBucketLocation
                   - s3:AbortMultipartUpload
+                  - s3:ListBucketVersions"
                   - s3:ListMultipartUploadParts
                   - kms:GenerateDataKey
                   - kms:Encrypt
@@ -107,6 +108,24 @@ Resources:
                 Resource:
                   - !GetAtt ImmichBucket.Arn
                   - !Sub ${ImmichBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - "events:DeleteRule"
+                  - "events:DisableRule"
+                  - "events:EnableRule"
+                  - "events:PutRule"
+                  - "events:PutTargets"
+                  - "events:RemoveTargets"
+                Resource:
+                  - "arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*"
+              - Effect: Allow
+                Action:
+                  - "events:DescribeRule"
+                  - "events:ListRuleNamesByTarget"
+                  - "events:ListRules"
+                  - "events:ListTargetsByRule"
+                Resource:
+                  - "arn:aws:events:*:*:rule/*"
 
   # ── S3 Files Security Group ────────────────────────────────────────────────
   S3FilesSG:
@@ -132,7 +151,7 @@ Resources:
       AcceptBucketWarning: true           # Required acknowledgement
       SynchronizationConfiguration:
         ExpirationDataRules:
-          - DaysAfterLastAccess: 10
+          - DaysAfterLastAccess: 5
         ImportDataRules:
           - Prefix: ""
             SizeLessThan: 131072

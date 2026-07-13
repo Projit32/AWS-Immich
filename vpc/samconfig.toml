@@ -3,14 +3,14 @@ version = 0.1
 [vpc.deploy.parameters]
 stack_name        = "immich-vpc"
 template_file     = "immich-vpc.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
   "VPCName=immich-vpc",
-  "VPCRegion=us-east-1",
+  "VPCRegion=ap-south-1",
   "NatGatewayRequired=false",
   "HostedZoneName=immich.internal"
 ]

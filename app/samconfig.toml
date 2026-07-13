@@ -1,40 +1,20 @@
 version = 0.1
 
-# ── Supporting Resource Stack ────────────────────────────────────────────────────────────
-[sr.deploy.parameters]
-stack_name        = "immich-supporting-resources"
-template_file     = "immich-sr-ec2.yaml"
-region            = "us-east-1"
-capabilities      = "CAPABILITY_NAMED_IAM"
-confirm_changeset = true
-fail_on_empty_changeset = false
-
-parameter_overrides = [
-  "VpcId=vpc-02cab24e4cec51cb5",
-  "SubnetId=subnet-0f05fbb3404eabb19",
-  "InstanceType=t4g.medium",
-  "AllowedCIDR=0.0.0.0/0",
-]
-
-tags = [
-  "Project=immich"
-]
-
 # ── App Stack ────────────────────────────────────────────────────────────
 [app.deploy.parameters]
 stack_name        = "immich-cluster"
 template_file     = "immich-app-ecs.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-02cab24e4cec51cb5",
-  "SubnetIds=subnet-0f05fbb3404eabb19",
-  "S3FilesystemId=fs-0b92c011139b425b8",
-  "S3FilesSGId=sg-04e9b4071da31c86e",
-  "EnvFileS3Arn=arn:aws:s3:::immich-conf-us-east-1-704678691702/immich.env",
+  "VpcId=vpc-0d58eaa3d2dd95593",
+  "SubnetIds=subnet-0cb74cba8880e488e",
+  "S3FilesystemId=fs-0a0d139852bdf9d3b",
+  "S3FilesSGId=sg-0816b4696099587ff",
+  "EnvFileS3Arn=arn:aws:s3:::immich-conf-ap-south-1-704678691702/immich.env",
   "HostName=immich.proapplication.net"
 ]
 

@@ -14,13 +14,13 @@ version = 0.1
 [ebs.deploy.parameters]
 stack_name        = "immich-db-cache-ebs"
 template_file     = "immich-db-cache-ebs.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "AvailabilityZone=us-east-1a",
+  "AvailabilityZone=ap-south-1a",
   "VolumeSize=30",
   "BackupRetentionDays=7"
 ]
@@ -34,19 +34,19 @@ tags = [
 [ec2.deploy.parameters]
 stack_name        = "immich-db-cache-ec2"
 template_file     = "immich-db-cache-ec2.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-02cab24e4cec51cb5",
+  "VpcId=vpc-0d58eaa3d2dd95593",
   "InstanceType=t4g.small",
   "AllowedCIDR=10.0.0.0/16",              # Tighten this to your actual VPC CIDR
-  "EnvFileS3URI=s3://immich-conf-us-east-1-704678691702/immich.env",
-  "ImageLocationS3Uri=s3://immich-conf-us-east-1-704678691702/images",
+  "EnvFileS3URI=s3://immich-conf-ap-south-1-704678691702/immich.env",
+  "ImageLocationS3Uri=s3://immich-conf-ap-south-1-704678691702/images",
   "KeyPair=Test",
-  "PrivateSubnetId=subnet-017bae2cb00a4e949"
+  "PrivateSubnetId=subnet-0acb86a7149e59597"
 ]
 
 # Tags applied to all resources in the stack
@@ -58,7 +58,7 @@ tags = [
 [handlers.deploy.parameters]
 stack_name        = "immich-spot-handlers"
 template_file     = "immich-spot-handlers.yaml"
-region            = "us-east-1"
+region            = "ap-south-1"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
