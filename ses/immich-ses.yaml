@@ -1,29 +1,94 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'SES Domain Identity and IAM User for Immich'
+Description: 'Automated SES Setup with DKIM, Custom MAIL FROM, Route 53 DNS, and Secrets Manager'
 
 Parameters:
   DomainName:
     Type: String
-    Description: 'The domain name to verify in SES (e.g., example.com)'
+    Description: 'The root domain name managed in Route 53 (e.g., example.com)'
+
+  MailFromSubdomain:
+    Type: String
+    Default: 'mail'
+    Description: 'Subdomain prefix to use for Custom MAIL FROM (e.g., mail -> mail.example.com)'
+
+  CustomSmtpUsername:
+    Type: String
+    Default: 'immich-smtp-mailer'
+    Description: 'Your desired custom IAM Username for SES'
 
 Resources:
-  # 1. Verify the Domain
+  # 1. Create SES Domain Identity with Custom MAIL FROM configuration
   ImmichSESDomain:
     Type: AWS::SES::EmailIdentity
     Properties:
       EmailIdentity: !Ref DomainName
+      MailFromAttributes:
+        MailFromDomain: !Sub "${MailFromSubdomain}.${DomainName}"
+        BehaviorOnMxFailure: USE_DEFAULT_VALUE
 
-  # 2. Create the IAM User for SMTP
+  # 2. Add DKIM Records to Route 53 (for Domain Verification)
+  DkimRecord1:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !GetAtt ImmichSESDomain.DkimDNSTokenName1
+      Type: CNAME
+      TTL: '1800'
+      ResourceRecords:
+        - !GetAtt ImmichSESDomain.DkimDNSTokenValue1
+
+  DkimRecord2:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !GetAtt ImmichSESDomain.DkimDNSTokenName2
+      Type: CNAME
+      TTL: '1800'
+      ResourceRecords:
+        - !GetAtt ImmichSESDomain.DkimDNSTokenValue2
+
+  DkimRecord3:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !GetAtt ImmichSESDomain.DkimDNSTokenName3
+      Type: CNAME
+      TTL: '1800'
+      ResourceRecords:
+        - !GetAtt ImmichSESDomain.DkimDNSTokenValue3
+
+  # 3. Add Custom MAIL FROM Records to Route 53 (MX + SPF TXT)
+  MailFromMXRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !Sub "${MailFromSubdomain}.${DomainName}."
+      Type: MX
+      TTL: '1800'
+      ResourceRecords:
+        - !Sub "10 feedback-smtp.${AWS::Region}.amazonses.com"
+
+  MailFromTXTRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !Sub "${MailFromSubdomain}.${DomainName}."
+      Type: TXT
+      TTL: '1800'
+      ResourceRecords:
+        - '"v=spf1 include:amazonses.com ~all"'
+
+  # 4. Create IAM User with Custom Username
   ImmichSMTPUser:
     Type: AWS::IAM::User
     Properties:
-      UserName: immich-ses-sender
+      UserName: !Ref CustomSmtpUsername
 
-  # 3. Attach Policy to send emails
+  # 5. Attach SES Sending Policy
   ImmichSMTPPolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: Immich-SES-Send-Policy
+      PolicyName: ImmichSESSendPolicy
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -33,16 +98,38 @@ Resources:
       Users:
         - !Ref ImmichSMTPUser
 
-  # 4. Generate Access Keys
-  ImmichSMTPAccessKey:
+  # 6. Generate Access Keys
+  ImmichAccessKey:
     Type: AWS::IAM::AccessKey
     Properties:
       UserName: !Ref ImmichSMTPUser
 
+  # 7. Store Credentials in Secrets Manager
+  ImmichSMTPSecret:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /immich/smtp/cred
+      Type: String
+      Value: !Sub |
+        {
+          "smtp_username": "${ImmichAccessKey}",
+          "iam_secret_key": "${ImmichAccessKey.SecretAccessKey}",
+          "mail_from_domain": "${MailFromSubdomain}.${DomainName}"
+        }
+
 Outputs:
-  SMTPUsername:
-    Description: 'Your SMTP Username (IAM Access Key)'
-    Value: !Ref ImmichSMTPAccessKey
-  IAMSecretKey:
-    Description: 'IAM Secret Key (Needs to be converted to SMTP Password)'
-    Value: !GetAtt ImmichSMTPAccessKey.SecretAccessKey
+  VerifiedDomain:
+    Description: 'Your root domain'
+    Value: !Ref DomainName
+
+  CustomMailFromDomain:
+    Description: 'The Custom MAIL FROM domain configured'
+    Value: !Sub "${MailFromSubdomain}.${DomainName}"
+
+  SMTPCred:
+    Description: 'AWS Secrets Manager ARN where SMTP credentials are stored'
+    Value: !Ref ImmichAccessKey
+
+  SMTPCredPassword:
+    Description: 'AWS Secrets Manager ARN where SMTP credentials are stored'
+    Value: !Sub "${ImmichAccessKey.SecretAccessKey}"
