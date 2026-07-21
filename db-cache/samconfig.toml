@@ -66,10 +66,10 @@ resolve_s3 = true
 s3_prefix = "immich-db-handlers"
 
 parameter_overrides = [
-  "SpotLaunchTemplateId=lt-0e5ea6aab7d8f6752",
-  "OnDemandLaunchTemplateId=lt-00180f93f3c24b280",
-  "VolumeId=vol-0dc33a967715860ae",
-  "HostedZoneId=Z07936822CC6UP64WC1MP",              # Tighten this to your actual VPC CIDR
+  "SpotLaunchTemplateId=lt-04401f755efab6e6b",
+  "OnDemandLaunchTemplateId=lt-029d9ff9186e713a2",
+  "VolumeId=vol-0be3274f06c636f10",
+  "HostedZoneId=Z020087419U7U4QO4PQU1",              # Tighten this to your actual VPC CIDR
   "RecordName=backend.immich.internal",
   "ECSClusterName=immich-cluster"
 ]

@@ -1,0 +1,23 @@
+version = 0.1
+# ── Lambda Stack ─────────────────────────────────────────────────────────────────
+[composer.deploy.parameters]
+stack_name        = "immich-composer-handler"
+template_file     = "immich-composer-handlers.yaml"
+region            = "ap-south-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+resolve_s3 = true
+
+parameter_overrides = [
+  "SpotLaunchTemplateId=lt-04401f755efab6e6b",
+  "VolumeId=vol-0be3274f06c636f10",
+  "HostedZoneId=Z020087419U7U4QO4PQU1",              # Tighten this to your actual VPC CIDR
+  "RecordName=backend.immich.internal",
+  "ECSClusterName=immich-cluster"
+]
+
+# Tags applied to all resources in the stack
+tags = [
+  "Project=immich"
+]

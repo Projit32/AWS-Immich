@@ -3,7 +3,6 @@ import os
 import time
 
 import boto3
-from tenacity import sleep
 
 ec2 = boto3.client("ec2")
 route53 = boto3.client("route53")
@@ -27,9 +26,10 @@ VOLUME_TIMEOUT = 120
 
 
 def lambda_handler(event, context):
-
-    # decide to start ot stop
-    pass
+    if bool(event.get("start")):
+        start_service()
+    elif bool(event.get("stop")):
+        stop_service()
 
 def start_service():
     spot_instance_id = launch_spot_instance()

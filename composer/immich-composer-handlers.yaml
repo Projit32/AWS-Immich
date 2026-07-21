@@ -8,9 +8,6 @@ Parameters:
   SpotLaunchTemplateId:
     Type: String
 
-  OnDemandLaunchTemplateId:
-    Type: String
-
   VolumeId:
     Type: String
 
