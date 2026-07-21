@@ -36,7 +36,7 @@ def lambda_handler(event, context):
 
     state = get_state()
 
-    if state.get("state") == "OD_ACTIVE":
+    if state.get("state") != "SPOT_ACTIVE":
         print("Already failed over. Nothing to do.")
         return {
             "status": "already-failed-over"
@@ -48,7 +48,7 @@ def lambda_handler(event, context):
     validate_spot_instance(spot_instance_id)
 
     # Turn of ECS services
-    awitch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+    switch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
                                  desired_count=0)
     #
     # Launch replacement first
@@ -96,7 +96,7 @@ def lambda_handler(event, context):
 
     print("=== Failover Completed Successfully ===")
     # Turn of ECS services
-    awitch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+    switch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
                                  desired_count=1)
 
     return {
@@ -397,7 +397,7 @@ def validate_spot_instance(instance_id):
         f"Validated DB spot instance {instance_id}"
     )
 
-def awitch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_tag_value: str, desired_count: int = 0):
+def switch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_tag_value: str, desired_count: int = 0):
     """
     Searches an AWS ECS cluster for services matching a specific tag
     and sets their desired task count to 0.
