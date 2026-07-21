@@ -139,7 +139,7 @@ Resources:
 
 
   #########################################################
-  # Failover Lambda
+  # Composer Lambda
   #########################################################
 
   ComposerFunction:
@@ -154,6 +154,21 @@ Resources:
       Handler: compose_handler.lambda_handler
 
       Role: !GetAtt LambdaExecutionRole.Arn
+
+      Events:
+        MorningStart:
+          Type: Schedule
+          Properties:
+            Name: immich-morning-start-rule
+            Schedule: cron(30 1 * * ? *)
+            Input: '{"start": true}'
+
+        NightStop:
+          Type: Schedule
+          Properties:
+            Name: immich-night-stop-rule
+            Schedule: cron(30 16 * * ? *)
+            Input: '{"stop": true}'
 
       Environment:
 
@@ -176,7 +191,6 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/immich-composer-handler
       RetentionInDays: 7
-
 
 
 Outputs:
