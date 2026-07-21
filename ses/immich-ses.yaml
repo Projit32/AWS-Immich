@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SES Domain Identity and IAM User for Immich'
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: 'The domain name to verify in SES (e.g., example.com)'
+
+Resources:
+  # 1. Verify the Domain
+  ImmichSESDomain:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref DomainName
+
+  # 2. Create the IAM User for SMTP
+  ImmichSMTPUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: immich-ses-sender
+
+  # 3. Attach Policy to send emails
+  ImmichSMTPPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: Immich-SES-Send-Policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ses:SendRawEmail
+            Resource: '*'
+      Users:
+        - !Ref ImmichSMTPUser
+
+  # 4. Generate Access Keys
+  ImmichSMTPAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref ImmichSMTPUser
+
+Outputs:
+  SMTPUsername:
+    Description: 'Your SMTP Username (IAM Access Key)'
+    Value: !Ref ImmichSMTPAccessKey
+  IAMSecretKey:
+    Description: 'IAM Secret Key (Needs to be converted to SMTP Password)'
+    Value: !GetAtt ImmichSMTPAccessKey.SecretAccessKey

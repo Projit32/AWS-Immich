@@ -1,0 +1,17 @@
+version = 0.1
+# ── ACM Stack ───────────────────────────────────────────────────────────────
+[ses.deploy.parameters]
+stack_name        = "immich-ses"
+template_file     = "immich-ses.yaml"
+region            = "ap-south-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+parameter_overrides = [
+  "DomainName=immich.proapplication.net"
+]
+
+tags = [
+  "Project=immich"
+]
