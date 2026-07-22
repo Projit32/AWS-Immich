@@ -10,10 +10,6 @@ Parameters:
     Type: String
     Description: Name of the VPC Region
 
-  HostedZoneName:
-    Type: String
-    Description: Name of the private hosted zone
-
   Subnet2Required:
     Type: String
     Description: 2nd Subnet required
@@ -332,16 +328,6 @@ Resources:
       SubnetId: !Ref PrivateSubnet6
       RouteTableId: !Ref PrivateRouteTable
 
-  PrivateHostedZone:
-    Type: AWS::Route53::HostedZone
-    Properties:
-      Name: !Ref HostedZoneName
-      HostedZoneConfig:
-        Comment: "Private hosted zone for internal microservices"
-      VPCs:
-        - VPCId: !Ref PubPrivateVPC
-          VPCRegion: !Ref AWS::Region
-
   S3VPCEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -356,14 +342,6 @@ Outputs:
   VpcId:
     Description: VPC ID
     Value: !Ref PubPrivateVPC
-
-  HostedZoneId:
-    Description: Route53 Private Hosted Zone ID
-    Value: !Ref PrivateHostedZone
-
-
-  HostedZoneName:
-    Value: !Ref HostedZoneName
 
 
   PublicRouteTableId:

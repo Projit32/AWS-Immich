@@ -12,7 +12,6 @@ parameter_overrides = [
   "VPCName=immich-vpc",
   "VPCRegion=ap-south-1",
   "NatGatewayRequired=false",
-  "HostedZoneName=immich.internal"
 ]
 
 tags = [
