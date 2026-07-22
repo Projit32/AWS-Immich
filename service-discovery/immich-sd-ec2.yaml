@@ -150,7 +150,7 @@ Resources:
   TraefikInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${AWS::StackName}-Traefik-role"
+      RoleName: !Sub "Traefik-role-${AWS::AccountId}"
 
       AssumeRolePolicyDocument:
         Version: "2012-10-17"

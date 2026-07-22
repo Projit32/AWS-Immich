@@ -77,7 +77,7 @@ Resources:
   S3FilesRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub immich-s3files-role
+      RoleName: !Sub immich-s3files-role-${AWS::AccountId}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
