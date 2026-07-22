@@ -70,7 +70,7 @@ Resources:
               DaysAfterInitiation: 3
       Tags:
         - Key: Name
-          Value: !Sub immich-media-s3
+          Value: immich-media-s3
 
   # ── IAM Role for S3 Files ──────────────────────────────────────────────────
   # S3 Files requires an IAM role to access the bucket on behalf of the filesystem.
@@ -98,7 +98,7 @@ Resources:
                   - s3:List*
                   - s3:GetBucketLocation
                   - s3:AbortMultipartUpload
-                  - s3:ListBucketVersions"
+                  - s3:ListBucketVersions
                   - s3:ListMultipartUploadParts
                   - kms:GenerateDataKey
                   - kms:Encrypt
@@ -139,12 +139,11 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub immich-s3files-sg
+          Value: immich-s3files-sg
 
   # ── S3 Files Filesystem ────────────────────────────────────────────────────
   ImmichFilesystem:
     Type: AWS::S3Files::FileSystem
-    DependsOn: ImmichBucket
     Properties:
       Bucket: !GetAtt ImmichBucket.Arn   # Must be ARN not bucket name
       RoleArn: !GetAtt S3FilesRole.Arn
