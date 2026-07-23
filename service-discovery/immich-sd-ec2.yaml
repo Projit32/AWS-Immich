@@ -83,17 +83,7 @@ Resources:
         Name: !Sub "${AWS::StackName}-ForwardHostHeaderPolicy"
         Comment: Passes required validation headers to downstream Traefik and Immich
         HeadersConfig:
-          HeaderBehavior: whitelist
-          Headers:
-            - Host
-            - Origin
-            - Referer
-            - Authorization
-            - x-api-key
-            - Upgrade
-            - Connection
-            - Sec-WebSocket-Key
-            - Sec-WebSocket-Version
+          HeaderBehavior: allViewer
         CookiesConfig:
           CookieBehavior: all
         QueryStringsConfig:
