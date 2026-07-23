@@ -82,7 +82,7 @@ Resources:
   ImmichSMTPUser:
     Type: AWS::IAM::User
     Properties:
-      UserName: !Ref CustomSmtpUsername
+      UserName: !Sub CustomSmtpUsername-${AWS::Region}
 
   # 5. Attach SES Sending Policy
   ImmichSMTPPolicy:
