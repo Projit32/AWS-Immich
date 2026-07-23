@@ -90,6 +90,10 @@ Resources:
             - Referer
             - Authorization
             - x-api-key
+            - Upgrade
+            - Connection
+            - Sec-WebSocket-Key
+            - Sec-WebSocket-Version
         CookiesConfig:
           CookieBehavior: all
         QueryStringsConfig:
@@ -315,7 +319,7 @@ Resources:
             --providers.ecs.clusters=immich-cluster \
             --providers.ecs.region=${AWS::Region} \
             --providers.ecs.exposedByDefault=false \
-            --entrypoints.web.address=:80
+            --entrypoints.web.address=:80 \
             --entrypoints.web.forwardedheaders.insecure=true
 
           ExecStop=/usr/bin/docker stop -t 20 traefik

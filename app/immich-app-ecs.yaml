@@ -59,16 +59,6 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
           Description: Allow all outbound
-
-  TaskSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Immich ECS Task
-      VpcId: !Ref VpcId
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-          Description: Allow all outbound
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 2283
@@ -233,8 +223,8 @@ Resources:
         ManagedScaling:
           Status: ENABLED
           TargetCapacity: 100
-          MinimumScalingStepSize: 1            # Forces 1 instance scaling increments
-          MaximumScalingStepSize: 1            # Prevents overprovisioning 2 instances at once
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
 
   WorkerCapacityProvider:
     Type: AWS::ECS::CapacityProvider
@@ -245,8 +235,8 @@ Resources:
         ManagedScaling:
           Status: ENABLED
           TargetCapacity: 100
-          MinimumScalingStepSize: 1            # Forces 1 instance scaling increments
-          MaximumScalingStepSize: 1            # Prevents overprovisioning 2 instances at once
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
 
   ClusterCapacityProviders:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
@@ -264,7 +254,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-api
-      NetworkMode: awsvpc
+      NetworkMode: bridge  # Changed from awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 756
@@ -281,9 +271,9 @@ Resources:
           Memory: 756
           DockerLabels:
             traefik.enable: "true"
-            traefik.http.routers.immich-api.rule: !Sub "Host(`${HostName}`)" # Replace with your domain
-            traefik.http.routers.immich-api.entrypoints: "web"                  # Matches Traefik's entrypoint config
-            traefik.http.services.immich-api.loadbalancer.server.port: "2283"    # The internal container port
+            traefik.http.routers.immich-api.rule: !Sub "Host(`${HostName}`)"
+            traefik.http.routers.immich-api.entrypoints: "web"
+            traefik.http.services.immich-api.loadbalancer.server.port: "2283"
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -307,7 +297,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-microservices
-      NetworkMode: awsvpc
+      NetworkMode: bridge  # Changed from awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 3584
@@ -344,7 +334,7 @@ Resources:
       - ClusterCapacityProviders
     Properties:
       Cluster: !Ref ECSCluster
-      ServiceName: "immich-api-service" # This sets the name
+      ServiceName: "immich-api-service"
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
       DeploymentConfiguration:
@@ -354,18 +344,14 @@ Resources:
         - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
       TaskDefinition: !Ref ApiTaskDefinition
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: !Ref SubnetIds
-          SecurityGroups:
-            - !Ref TaskSecurityGroup
+      # NetworkConfiguration removed (not supported in bridge mode)
 
   WorkerService:
     Type: AWS::ECS::Service
     DependsOn:
       - ClusterCapacityProviders
     Properties:
-      ServiceName: "immich-worker-service" # This sets the name
+      ServiceName: "immich-worker-service"
       Cluster: !Ref ECSCluster
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
@@ -376,11 +362,7 @@ Resources:
         - CapacityProvider: !Ref WorkerCapacityProvider
           Weight: 1
       TaskDefinition: !Ref WorkerTaskDefinition
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: !Ref SubnetIds
-          SecurityGroups:
-            - !Ref TaskSecurityGroup
+      # NetworkConfiguration removed (not supported in bridge mode)
 
 Outputs:
   ClusterName:
