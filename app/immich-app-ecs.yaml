@@ -222,6 +222,7 @@ Resources:
             - InstanceType: c6g.large
             - InstanceType: c7g.large
             - InstanceType: c8g.large
+            - InstanceType: t4g.medium
 
   ApiCapacityProvider:
     Type: AWS::ECS::CapacityProvider
