@@ -131,6 +131,8 @@ Resources:
         SecurityGroupIds:
           - !Ref HostSecurityGroup
         ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+        CreditSpecification:
+          CpuCredits: standard
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
@@ -212,7 +214,6 @@ Resources:
             - InstanceType: c6g.large
             - InstanceType: c7g.large
             - InstanceType: c8g.large
-            - InstanceType: t4g.medium
 
   ApiCapacityProvider:
     Type: AWS::ECS::CapacityProvider
