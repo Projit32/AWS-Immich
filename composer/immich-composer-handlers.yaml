@@ -152,6 +152,10 @@ Resources:
 
       Role: !GetAtt LambdaExecutionRole.Arn
 
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 60
+
       Events:
         MorningStart:
           Type: Schedule
