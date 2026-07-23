@@ -42,10 +42,12 @@ def lambda_handler(event, context):
             "status": "already-failed-over"
         }
 
-    update_state("FAILOVER_IN_PROGRESS")
+
 
     spot_instance_id = get_spot_instance_from_event(event)
     validate_spot_instance(spot_instance_id)
+
+    update_state("FAILOVER_IN_PROGRESS")
 
     # Turn of ECS services
     switch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
