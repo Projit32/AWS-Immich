@@ -80,7 +80,7 @@ def stop_service():
                                desired_count=0)
 
     print("ECS shut down")
-    sleep(10)
+    time.sleep(10)
     terminate_instance(state.get("activeInstanceId"))
     print("DB-Cache terminated")
 
