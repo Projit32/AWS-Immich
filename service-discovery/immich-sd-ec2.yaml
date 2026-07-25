@@ -223,14 +223,14 @@ Resources:
           mkdir -p /opt/scheduled /opt/traefik
           
           # Create and set strict permissions for SSL certificate storage
-          touch /opt/traefik/acme.json
+          aws s3 cp ${EnvFileS3URI}/acme.json /opt/traefik/acme.json || touch /opt/traefik/acme.json
           chmod 600 /opt/traefik/acme.json
 
           aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
           chmod +x /opt/scheduled/microservice-cache-check.sh
           aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
           chmod +x /opt/scheduled/ml-cache-check.sh
-          aws s3 cp "${EnvFileS3URI}" /opt/scheduled/var.env
+          aws s3 cp "${EnvFileS3URI}"/immich.env /opt/scheduled/var.env
           source /opt/scheduled/var.env   
                   
           aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
@@ -270,7 +270,9 @@ Resources:
             --certificatesresolvers.le.acme.httpchallenge=true \
             --certificatesresolvers.le.acme.httpchallenge.entrypoint=web \
             --certificatesresolvers.le.acme.email=${AcmeEmail} \
-            --certificatesresolvers.le.acme.storage=/etc/traefik/acme.json
+            --certificatesresolvers.le.acme.storage=/etc/traefik/acme.json \
+            --entrypoints.websecure.transport.respondingtimeouts.readtimeout=3600s \
+            --entrypoints.websecure.transport.respondingtimeouts.idletimeout=3600s
 
           ExecStop=/usr/bin/docker stop -t 20 traefik
 

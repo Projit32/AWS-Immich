@@ -59,7 +59,7 @@ Resources:
           # Scope to upload/library/ only — thumbnails stay in Standard
           - Id: IntelligentTieringOriginals
             Status: Enabled
-            Prefix: upload/library/
+            Prefix: upload/
             Transitions:
               - TransitionInDays: !Ref IntelligentTieringDays
                 StorageClass: INTELLIGENT_TIERING
