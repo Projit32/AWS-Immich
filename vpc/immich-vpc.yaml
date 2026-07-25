@@ -336,6 +336,7 @@ Resources:
       VpcEndpointType: Gateway
       RouteTableIds:
         - !Ref PrivateRouteTable
+        - !Ref PublicRouteTable
 
 
 Outputs:
