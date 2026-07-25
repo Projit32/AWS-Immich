@@ -21,6 +21,11 @@ Parameters:
     Type: String
     Description: S3 Gateway endpoint
 
+  AllowedCIDR:
+    Type: String
+    Default: 10.0.0.0/8
+    Description: >
+      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
   # ── Bucket ─────────────────────────────────────────────────────────────────
   BucketName:
     Type: String
@@ -165,7 +170,12 @@ Resources:
     Properties:
       GroupDescription: Immich S3 Files - NFS ingress managed by app EC2 stacks
       VpcId: !Ref VpcId
-      SecurityGroupIngress: []   # Ingress rules injected by app EC2 stacks
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref AllowedCIDR
+          Description: Allow connection to APP
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0

@@ -42,18 +42,24 @@ Parameters:
     Type: String
     Description: Email address used for Let's Encrypt SSL certificate registration.
 
+  S3FilesystemId:
+    Type: String
+
 Conditions:
   HasKey: !Not [!Equals [!Ref KeyPair, ""] ]
 
 Resources:
 
   # --- UPDATED LOCKED DOWN SECURITY GROUP ---
-  TraefikSecurityGroup:
+  ImmichAppSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Security Group for Traefik
       VpcId: !Ref VpcId
-
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
@@ -76,19 +82,9 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: Traefik Dashboard
 
-  # --- NEW ROUTE 53 ALIAS RECORD POINTING TO EC2 ---
-  Route53Record:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Ref DomainName
-      Type: A
-      TTL: "300"
-      ResourceRecords:
-        - !GetAtt TraefikInstance.PublicIp
 
   # --- YOUR EXISTING IAM CONFIGURATION ---
-  TraefikInstanceRole:
+  ImmichAppInstanceRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "Traefik-role-${AWS::AccountId}"
@@ -105,6 +101,8 @@ Resources:
 
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
 
       Policies:
         - PolicyName: S3Access
@@ -116,6 +114,7 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                   - s3:HeadObject
+                  - s3:PutObject
                 Resource:
                   - !Sub arn:aws:s3:::${BucketName}/*
               - Effect: Allow
@@ -162,15 +161,26 @@ Resources:
                   - ecs:ListServices
                   - ecs:UpdateService
                 Resource: "*"
+        - PolicyName: route53-control
 
-  TraefikInstanceProfile:
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                Resource: "*"
+
+  ImmichAppInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref TraefikInstanceRole
+        - !Ref ImmichAppInstanceRole
 
   # --- YOUR EXISTING EC2 INSTANCE DEFINITION ---
-  TraefikInstance:
+  ImmichAppInstance:
     Type: AWS::EC2::Instance
     Properties:
 
@@ -178,11 +188,11 @@ Resources:
 
       InstanceType: !Ref InstanceType
 
-      IamInstanceProfile: !Ref TraefikInstanceProfile
+      IamInstanceProfile: !Ref ImmichAppInstanceProfile
 
       Tags:
         - Key: Name
-          Value: !Sub Traefik
+          Value: !Sub Immich-API-App
 
       KeyName: !If
         - HasKey
@@ -197,7 +207,7 @@ Resources:
         - DeviceIndex: 0
           SubnetId: !Ref SubnetId
           GroupSet:
-            - !Ref TraefikSecurityGroup
+            - !Ref ImmichAppSG
 
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
@@ -211,11 +221,21 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -euxo pipefail
-          exec > >(tee /var/log/traefik.log | logger -t traefik) 2>&1
+          exec > >(tee /var/log/immich-app.log | logger -t immich-app) 2>&1
 
           until systemctl is-active --quiet docker; do
             sleep 2
           done
+          
+          mkdir -p /mnt/immich
+          if ! mountpoint -q /mnt/immich; then
+            mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+            echo "Mounted ${S3FilesystemId} to /mnt/immich"
+          fi
+          if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+            echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+            echo "Added ${S3FilesystemId} to /etc/fstab"
+          fi
           
           dnf install valkey cronie -y
           systemctl enable --now crond
@@ -236,6 +256,9 @@ Resources:
           aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
           docker load -i traefik.tar
           
+          aws s3 cp ${ImageLocationS3Uri}/immich.tar .
+          docker load -i immich.tar
+          
           cat >/etc/systemd/system/traefik.service <<'EOF'
           [Unit]
           Description=Traefik
@@ -255,14 +278,13 @@ Resources:
             -p 80:80 \
             -p 443:443 \
             -p 8080:8080 \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
             -v /opt/traefik/acme.json:/etc/traefik/acme.json \
             -e AWS_REGION=${AWS::Region} \
             traefik:latest \
             --api.insecure=true \
-            --providers.ecs=true \
-            --providers.ecs.clusters=immich-cluster \
-            --providers.ecs.region=${AWS::Region} \
-            --providers.ecs.exposedByDefault=false \
+            --providers.docker=true \
+            --providers.docker.exposedByDefault=false \
             --entrypoints.web.address=:80 \
             --entrypoints.websecure.address=:443 \
             --entrypoints.web.http.redirections.entryPoint.to=websecure \
@@ -277,6 +299,43 @@ Resources:
           ExecStop=/usr/bin/docker stop -t 20 traefik
 
           ExecStopPost=-/usr/bin/docker rm -f traefik
+          ExecStopPost=-/usr/bin/aws s3 cp /opt/traefik/acme.json ${EnvFileS3URI}/acme.json 
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # ================================
+          
+          cat >/etc/systemd/system/immich-api.service <<EOF
+          [Unit]
+          Description=Immich API
+          Requires=docker.service
+          After=docker.service network-online.target
+
+          [Service]
+          Type=simple
+          Restart=always
+          RestartSec=10
+
+          ExecStartPre=-/usr/bin/docker rm -f immich-api
+
+          ExecStart=/usr/bin/docker run \
+            --name immich-api \
+            --restart unless-stopped \
+            --env-file /opt/scheduled/var.env \
+            -e IMMICH_WORKERS_INCLUDE=api \
+            --label "traefik.enable=true" \
+            --label "traefik.http.routers.immich.rule=Host(\`${DomainName}\`)" \
+            --label "traefik.http.routers.immich.entrypoints=websecure" \
+            --label "traefik.http.routers.immich.tls.certresolver=le" \
+            --label "traefik.http.services.immich.loadbalancer.server.port=2283" \
+            -v /mnt/immich/upload:/usr/src/app/upload \
+            ghcr.io/immich-app/immich-server:release
+
+          ExecStop=/usr/bin/docker stop -t 60 immich-api
+          ExecStopPost=/usr/bin/sync
+          ExecStopPost=-/usr/bin/docker rm -f immich-api
 
           [Install]
           WantedBy=multi-user.target
@@ -284,34 +343,69 @@ Resources:
 
           systemctl daemon-reload
           systemctl enable traefik.service
+          systemctl enable immich-api.service
           systemctl start traefik.service
+          systemctl start immich-api.service
           
           echo "Adding crontab entry"
           echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $BACKEND_SSM_PARAM_NAME $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME $REDIS_HOSTNAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
           crontab /tmp/mycrontab
           
           crontab -l 
+          
+          echo "+++++++++++++ SETTING ROUTE 53 +++++++++++++"
+          # 1. Fetch IMDSv2 Token & Public IP
+          TOKEN=$(curl -s -S -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          PUBLIC_IP=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+
+          # 2. Construct the Route 53 Change Batch Payload
+          cat > /tmp/route53-change.json <<EOF
+          {
+            "Comment": "Auto-updating A record on instance boot",
+            "Changes": [
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${DomainName}",
+                  "Type": "A",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "$PUBLIC_IP"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+
+          # 3. Apply the update to Route 53
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id "${HostedZoneId}" \
+            --change-batch file:///tmp/route53-change.json
+          
           echo "========= INIT COMPLETE ========"
 
 Outputs:
 
   InstanceId:
-    Value: !Ref TraefikInstance
+    Value: !Ref ImmichAppInstance
 
   PublicIp:
-    Value: !GetAtt TraefikInstance.PublicIp
+    Value: !GetAtt ImmichAppInstance.PublicIp
 
   AvailabilityZone:
-    Value: !GetAtt TraefikInstance.AvailabilityZone
+    Value: !GetAtt ImmichAppInstance.AvailabilityZone
 
   SecurityGroupId:
-    Value: !Ref TraefikSecurityGroup
+    Value: !Ref ImmichAppSG
 
   InstanceProfile:
-    Value: !Ref TraefikInstanceProfile
+    Value: !Ref ImmichAppInstanceProfile
 
   Role:
-    Value: !Ref TraefikInstanceRole
+    Value: !Ref ImmichAppInstanceRole
 
   ApplicationURL:
     Description: Your secure application endpoint
