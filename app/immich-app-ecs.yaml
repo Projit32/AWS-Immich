@@ -31,6 +31,12 @@ Resources:
     Properties:
       ClusterName: immich-cluster
 
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/immich-api
+      RetentionInDays: 5
+
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -99,6 +105,32 @@ Resources:
                   - s3:GetObject
                 Resource: "*"
 
+  ApiLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt ECSInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref HostSecurityGroup
+        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+        CreditSpecification:
+          CpuCredits: standard
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
+            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            mkdir -p /mnt/immich
+            if ! mountpoint -q /mnt/immich; then
+              mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+              echo "Mounted ${S3FilesystemId} to /mnt/immich"
+            fi
+            if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+              echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+              echo "Added ${S3FilesystemId} to /etc/fstab"
+            fi
 
   WorkerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -125,6 +157,25 @@ Resources:
               echo "Added ${S3FilesystemId} to /etc/fstab"
             fi
 
+  ApiASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: "0"
+      MaxSize: "3"
+      DesiredCapacity: "0"
+      VPCZoneIdentifier: !Ref SubnetIds
+      NewInstancesProtectedFromScaleIn: true
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotAllocationStrategy: price-capacity-optimized
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref ApiLaunchTemplate
+            Version: !GetAtt ApiLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: t4g.micro
+            - InstanceType: t4g.small
 
   WorkerASG:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -147,6 +198,18 @@ Resources:
             - InstanceType: c7g.large
             - InstanceType: c8g.large
 
+  ApiCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        ManagedTerminationProtection: ENABLED
+        AutoScalingGroupArn: !Ref ApiASG
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
+
   WorkerCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -164,11 +227,57 @@ Resources:
     Properties:
       Cluster: !Ref ECSCluster
       DefaultCapacityProviderStrategy:
-        - CapacityProvider: !Ref WorkerCapacityProvider
+        - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
           Base: 0
       CapacityProviders:
+        - !Ref ApiCapacityProvider
         - !Ref WorkerCapacityProvider
+
+  ApiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: immich-api
+      NetworkMode: bridge  # Changed from awsvpc
+      RequiresCompatibilities: [EC2]
+      Cpu: 2048
+      Memory: 800
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      Volumes:
+        - Name: uploads
+          Host:
+            SourcePath: /mnt/immich/upload
+      ContainerDefinitions:
+        - Name: immich-api
+          Image: ghcr.io/immich-app/immich-server:release
+          Essential: true
+          Cpu: 2048
+          Memory: 800
+          DockerLabels:
+            traefik.enable: "true"
+            traefik.http.routers.immich-api.rule: !Sub "Host(`${HostName}`)"
+            traefik.http.routers.immich-api.entrypoints: "websecure"
+            traefik.http.routers.immich-api.tls: "true"
+            traefik.http.routers.immich-api.tls.certresolver: "le"
+            traefik.http.services.immich-api.loadbalancer.server.port: "2283"
+          EnvironmentFiles:
+            - Type: s3
+              Value: !Ref EnvFileS3Arn
+          Environment:
+            - Name: IMMICH_WORKERS_INCLUDE
+              Value: api
+          PortMappings:
+            - ContainerPort: 2283
+              HostPort: 2283
+          MountPoints:
+            - SourceVolume: uploads
+              ContainerPath: /usr/src/app/upload
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/immich-api
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
 
   WorkerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -177,7 +286,7 @@ Resources:
       NetworkMode: bridge  # Changed from awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 2048
-      Memory: 3584
+      Memory: 3700
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
       Volumes:
         - Name: uploads
@@ -188,7 +297,7 @@ Resources:
           Image: ghcr.io/immich-app/immich-server:release
           Essential: true
           Cpu: 2048
-          Memory: 3584
+          Memory: 3700
           EnvironmentFiles:
             - Type: s3
               Value: !Ref EnvFileS3Arn
@@ -205,6 +314,23 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ClusterCapacityProviders
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: "immich-api-service"
+      DesiredCount: 0
+      AvailabilityZoneRebalancing: DISABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      CapacityProviderStrategy:
+        - CapacityProvider: !Ref ApiCapacityProvider
+          Weight: 1
+      TaskDefinition: !Ref ApiTaskDefinition
+      # NetworkConfiguration removed (not supported in bridge mode)
 
   WorkerService:
     Type: AWS::ECS::Service
@@ -227,6 +353,9 @@ Resources:
 Outputs:
   ClusterName:
     Value: !Ref ECSCluster
+
+  ApiServiceName:
+    Value: !Ref ApiService
 
   WorkerServiceName:
     Value: !Ref WorkerService
