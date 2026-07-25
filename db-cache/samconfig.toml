@@ -14,13 +14,13 @@ version = 0.1
 [ebs.deploy.parameters]
 stack_name        = "immich-db-cache-ebs"
 template_file     = "immich-db-cache-ebs.yaml"
-region            = "ap-south-1"
+region            = "ap-south-2"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "AvailabilityZone=ap-south-1a",
+  "AvailabilityZone=ap-south-2a",
   "VolumeSize=30",
   "BackupRetentionDays=7"
 ]
@@ -34,19 +34,19 @@ tags = [
 [ec2.deploy.parameters]
 stack_name        = "immich-db-cache-ec2"
 template_file     = "immich-db-cache-ec2.yaml"
-region            = "ap-south-1"
+region            = "ap-south-2"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
 
 parameter_overrides = [
-  "VpcId=vpc-0d58eaa3d2dd95593",
-  "InstanceType=t4g.small",
+  "VpcId=vpc-09f10291c29a1a7cf",
+  "InstanceType=t4g.micro",
   "AllowedCIDR=10.0.0.0/16",              # Tighten this to your actual VPC CIDR
-  "EnvFileS3URI=s3://immich-conf-ap-south-1-704678691702/immich.env",
-  "ImageLocationS3Uri=s3://immich-conf-ap-south-1-704678691702/images",
-  "KeyPair=Test",
-  "PrivateSubnetId=subnet-0acb86a7149e59597"
+  "EnvFileS3URI=s3://immich-conf-ap-south-2-704678691702/immich.env",
+  "ImageLocationS3Uri=s3://immich-conf-ap-south-2-704678691702/images",
+  "KeyPair=immich",
+  "PrivateSubnetId=subnet-0facb9837feac8aa0"
 ]
 
 # Tags applied to all resources in the stack
@@ -58,7 +58,7 @@ tags = [
 [handlers.deploy.parameters]
 stack_name        = "immich-spot-handlers"
 template_file     = "immich-spot-handlers.yaml"
-region            = "ap-south-1"
+region            = "ap-south-2"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
@@ -66,11 +66,11 @@ resolve_s3 = true
 s3_prefix = "immich-db-handlers"
 
 parameter_overrides = [
-  "SpotLaunchTemplateId=lt-04401f755efab6e6b",
-  "OnDemandLaunchTemplateId=lt-029d9ff9186e713a2",
-  "VolumeId=vol-0be3274f06c636f10",
-  "HostedZoneId=Z020087419U7U4QO4PQU1",              # Tighten this to your actual VPC CIDR
-  "RecordName=backend.immich.internal",
+  "SpotLaunchTemplateId=lt-03dc06539a177caa1",
+  "OnDemandLaunchTemplateId=lt-0906791cbfcd5ea48",
+  "VolumeId=vol-0cf3e9a98f1b471e8",
+  "HostedZoneId=Z02289381ARPAOGOTJFBT",              # Tighten this to your actual VPC CIDR
+  "RecordName=backend.ap-south-2.immich.internal",
   "ECSClusterName=immich-cluster"
 ]
 

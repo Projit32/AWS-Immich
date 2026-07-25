@@ -10,7 +10,7 @@ fail_on_empty_changeset = false
 
 parameter_overrides = [
   "DomainName=proapplication.net",
-  "MailFromSubdomain=immich-mailer"
+  "MailFromSubdomain=immich"
 ]
 
 tags = [
