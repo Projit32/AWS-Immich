@@ -273,7 +273,9 @@ Resources:
           DockerLabels:
             traefik.enable: "true"
             traefik.http.routers.immich-api.rule: !Sub "Host(`${HostName}`)"
-            traefik.http.routers.immich-api.entrypoints: "web"
+            traefik.http.routers.immich-api.entrypoints: "websecure"
+            traefik.http.routers.immich-api.tls: "true"
+            traefik.http.routers.immich-api.tls.certresolver: "le"
             traefik.http.services.immich-api.loadbalancer.server.port: "2283"
           EnvironmentFiles:
             - Type: s3

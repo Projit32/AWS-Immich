@@ -38,13 +38,9 @@ Parameters:
     Type: String
     Description: The fully qualified domain name for the application (e.g., app.yourdomain.com).
 
-  CloudFrontPrefixListId:
+  AcmeEmail:
     Type: String
-    Description: The CloudFront Managed Prefix List ID for your deployment region.
-
-  ACMCertificate:
-    Type: String
-    Description: ACM Certificate
+    Description: Email address used for Let's Encrypt SSL certificate registration.
 
 Conditions:
   HasKey: !Not [!Equals [!Ref KeyPair, ""] ]
@@ -55,7 +51,7 @@ Resources:
   TraefikSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security Group for Traefik - Protected by CloudFront
+      GroupDescription: Security Group for Traefik
       VpcId: !Ref VpcId
 
       SecurityGroupIngress:
@@ -63,82 +59,33 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-          Description: SSH access (Restrict this CIDR in production if possible)
+          Description: SSH access
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: !Ref CloudFrontPrefixListId
-          Description: Restrict inbound HTTP access exclusively to CloudFront Edge nodes
+          CidrIp: 0.0.0.0/0
+          Description: Inbound HTTP
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Inbound HTTPS
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
           CidrIp: 0.0.0.0/0
-          Description: Traefik Dashboard (Keep open or restrict to your IP as needed)
+          Description: Traefik Dashboard
 
-  # --- NEW CLOUDFRONT ORIGIN REQUEST POLICY (FOR HOST HEADER FORWARDING) ---
-  CloudFrontOriginRequestPolicy:
-    Type: AWS::CloudFront::OriginRequestPolicy
-    Properties:
-      OriginRequestPolicyConfig:
-        Name: !Sub "${AWS::StackName}-ForwardHostHeaderPolicy"
-        Comment: Passes required validation headers to downstream Traefik and Immich
-        HeadersConfig:
-          HeaderBehavior: allViewer
-        CookiesConfig:
-          CookieBehavior: all
-        QueryStringsConfig:
-          QueryStringBehavior: all
-
-  # --- NEW CLOUDFRONT DISTRIBUTION ---
-  CloudFrontDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Aliases:
-          - !Ref DomainName
-        Origins:
-          - Id: EC2BackendOrigin
-            DomainName: !GetAtt TraefikInstance.PublicDnsName
-            CustomOriginConfig:
-              HTTPPort: 80
-              HTTPSPort: 443
-              OriginProtocolPolicy: http-only
-            # --- ADD THIS BLOCK TO FIX PROTOCOL MISMATCH ---
-            OriginCustomHeaders:
-              - HeaderName: X-Forwarded-Proto
-                HeaderValue: https
-        DefaultCacheBehavior:
-          AllowedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-            - PUT
-            - POST
-            - PATCH
-            - DELETE
-          CachedMethods:
-            - GET
-            - HEAD
-          TargetOriginId: EC2BackendOrigin
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
-          OriginRequestPolicyId: !Ref CloudFrontOriginRequestPolicy
-        ViewerCertificate:
-          AcmCertificateArn: !Ref ACMCertificate
-          SslSupportMethod: sni-only
-          MinimumProtocolVersion: TLSv1.2_2021
-
-  # --- NEW ROUTE 53 ALIAS RECORD POINTING TO CLOUDFRONT ---
+  # --- NEW ROUTE 53 ALIAS RECORD POINTING TO EC2 ---
   Route53Record:
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Ref DomainName
       Type: A
-      AliasTarget:
-        HostedZoneId: Z2FDTNDATAQYW2 # The universal static Canonical Hosted Zone ID for all CloudFront Distributions
-        DNSName: !GetAtt CloudFrontDistribution.DomainName
+      TTL: "300"
+      ResourceRecords:
+        - !GetAtt TraefikInstance.PublicIp
 
   # --- YOUR EXISTING IAM CONFIGURATION ---
   TraefikInstanceRole:
@@ -273,7 +220,12 @@ Resources:
           dnf install valkey cronie -y
           systemctl enable --now crond
           
-          mkdir -p /opt/scheduled
+          mkdir -p /opt/scheduled /opt/traefik
+          
+          # Create and set strict permissions for SSL certificate storage
+          touch /opt/traefik/acme.json
+          chmod 600 /opt/traefik/acme.json
+
           aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
           chmod +x /opt/scheduled/microservice-cache-check.sh
           aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
@@ -301,7 +253,9 @@ Resources:
             --name traefik \
             --restart unless-stopped \
             -p 80:80 \
+            -p 443:443 \
             -p 8080:8080 \
+            -v /opt/traefik/acme.json:/etc/traefik/acme.json \
             -e AWS_REGION=${AWS::Region} \
             traefik:latest \
             --api.insecure=true \
@@ -310,7 +264,13 @@ Resources:
             --providers.ecs.region=${AWS::Region} \
             --providers.ecs.exposedByDefault=false \
             --entrypoints.web.address=:80 \
-            --entrypoints.web.forwardedheaders.insecure=true
+            --entrypoints.websecure.address=:443 \
+            --entrypoints.web.http.redirections.entryPoint.to=websecure \
+            --entrypoints.web.http.redirections.entryPoint.scheme=https \
+            --certificatesresolvers.le.acme.httpchallenge=true \
+            --certificatesresolvers.le.acme.httpchallenge.entrypoint=web \
+            --certificatesresolvers.le.acme.email=${AcmeEmail} \
+            --certificatesresolvers.le.acme.storage=/etc/traefik/acme.json
 
           ExecStop=/usr/bin/docker stop -t 20 traefik
 
@@ -350,10 +310,6 @@ Outputs:
 
   Role:
     Value: !Ref TraefikInstanceRole
-
-  CloudFrontDomainName:
-    Description: The public facing domain for your CloudFront distribution
-    Value: !GetAtt CloudFrontDistribution.DomainName
 
   ApplicationURL:
     Description: Your secure application endpoint
