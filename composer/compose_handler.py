@@ -20,6 +20,7 @@ STATE_PARAMETER = os.environ["STATE_PARAMETER"]
 SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
 
 ECS_CLUSTER_NAME = os.environ["ECS_CLUSTER_NAME"]
+ECS_SERVICE_NAMES = os.environ["ECS_SERVICE_NAMES"]
 
 INSTANCE_STATUS_TIMEOUT = 600
 VOLUME_TIMEOUT = 120
@@ -59,7 +60,7 @@ def start_service():
     )
     print("DNS updated")
 
-    switch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+    switch_ecs_services(cluster_name=ECS_CLUSTER_NAME, service_names=ECS_SERVICE_NAMES.split(","),
                                desired_count=1)
 
     print("ECS updated")
@@ -76,7 +77,7 @@ def stop_service():
         state="OFF"
     )
 
-    switch_ecs_services_by_tag(cluster_name=ECS_CLUSTER_NAME, target_tag_key="Project", target_tag_value="immich",
+    switch_ecs_services(cluster_name=ECS_CLUSTER_NAME, service_names=[],
                                desired_count=0)
 
     print("ECS shut down")
@@ -100,13 +101,7 @@ def get_state():
     except Exception:
         return {}
 
-def switch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_tag_value: str, desired_count: int = 0):
-    """
-    Searches an AWS ECS cluster for services matching a specific tag
-    and sets their desired task count to 0.
-    """
-
-    print(f"Searching cluster '{cluster_name}' for services tagged {target_tag_key}={target_tag_value}...")
+def switch_ecs_services(cluster_name: str, service_names:list[str] = list(), desired_count: int = 0):
 
     # Use paginator in case there are a large number of services
     paginator = ecs.get_paginator('list_services')
@@ -125,21 +120,14 @@ def switch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_ta
                 response = ecs.describe_services(
                     cluster=cluster_name,
                     services=batch_arns,
-                    include=['TAGS']  # Crucial for pulling tag data
                 )
 
                 for service in response.get('services', []):
                     service_name = service['serviceName']
                     current_count = service['desiredCount']
-                    tags = service.get('tags', [])
 
-                    # Check if the service contains our target tag
-                    has_matching_tag = any(
-                        tag['key'] == target_tag_key and tag['value'] == target_tag_value
-                        for tag in tags
-                    )
+                    if (service_name in service_names) or not service_names:
 
-                    if has_matching_tag:
                         if current_count == desired_count:
                             print(f"Service '{service_name}' is already at desiredCount={desired_count}. Skipping.")
                             continue
@@ -153,9 +141,11 @@ def switch_ecs_services_by_tag(cluster_name: str, target_tag_key: str, target_ta
                             desiredCount=desired_count
                         )
                         print(f"Successfully switched '{service_name}'.")
+                    else:
+                        print(f"Service '{service_name}' not found in cluster {cluster_name}.") # todo: changhe this
 
     except Exception as e:
-        print(f"An error occurred while interacting with AWS: {e}")
+        print(f"An error occurred switching service: {e}")
 
 def wait_for_instance_status_ok(instance_id):
 

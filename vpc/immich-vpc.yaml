@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: VPC for account
+Description: VPC with IPv6 for Public Subnets and Isolated IPv4 Private Subnets
 
 Parameters:
   VPCName:
@@ -50,21 +50,12 @@ Parameters:
       - "false"
     Default: "false"
 
-  NatGatewayRequired:
-    Type: String
-    Description: Nat Gateway Required
-    AllowedValues:
-      - "true"
-      - "false"
-    Default: "true"
-
 Conditions:
   2ndSubnetRequired: !Equals ["true", !Ref Subnet2Required]
   3rdSubnetRequired: !Equals ["true", !Ref Subnet3Required]
   4thSubnetRequired: !Equals ["true", !Ref Subnet4Required]
   5thSubnetRequired: !Equals ["true", !Ref Subnet5Required]
   6thSubnetRequired: !Equals ["true", !Ref Subnet6Required]
-  NatGWNeeded: !Equals ["true", !Ref NatGatewayRequired]
 
 Resources:
   ## VPC
@@ -78,60 +69,86 @@ Resources:
         - Key : Name
           Value: !Sub ${VPCName}-VPC
 
-  ## SUBNETS
+  ## IPv6 CIDR Block Allocation for VPC
+  VpcIpv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  ## PUBLIC SUBNETS (IPv6 Enabled)
   PublicSubnet1:
     Type: AWS::EC2::Subnet
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}a
       CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 0, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Condition: 2ndSubnetRequired
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}b
       CidrBlock: 10.0.2.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 1, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
   PublicSubnet3:
     Type: AWS::EC2::Subnet
     Condition: 3rdSubnetRequired
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}c
       CidrBlock: 10.0.3.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 2, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
   PublicSubnet4:
     Type: AWS::EC2::Subnet
     Condition: 4thSubnetRequired
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}d
       CidrBlock: 10.0.4.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 3, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
   PublicSubnet5:
     Type: AWS::EC2::Subnet
     Condition: 5thSubnetRequired
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}e
       CidrBlock: 10.0.5.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 4, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
   PublicSubnet6:
     Type: AWS::EC2::Subnet
     Condition: 6thSubnetRequired
+    DependsOn: VpcIpv6CidrBlock
     Properties:
       VpcId: !Ref PubPrivateVPC
       AvailabilityZone: !Sub ${VPCRegion}f
       CidrBlock: 10.0.6.0/24
-      MapPublicIpOnLaunch: true
+      Ipv6CidrBlock: !Select [ 5, !Cidr [ !Select [ 0, !GetAtt PubPrivateVPC.Ipv6CidrBlocks ], 256, 64 ] ]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: false
 
+  ## PRIVATE SUBNETS (IPv4 Only - Isolated)
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -209,7 +226,7 @@ Resources:
     DependsOn: GatewayToInternet
     Properties:
       RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
+      DestinationIpv6CidrBlock: "::/0"
       GatewayId: !Ref InternetGateway
 
   PublicSubnet1RouteTableAssociation:
@@ -253,23 +270,6 @@ Resources:
       SubnetId: !Ref PublicSubnet6
       RouteTableId: !Ref PublicRouteTable
 
-  ## NAT GATEWAY
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    DependsOn: NatPublicIP
-    Condition: NatGWNeeded
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      AllocationId: !GetAtt NatPublicIP.AllocationId
-
-  ## ELASTIC IP
-  NatPublicIP:
-    Type: AWS::EC2::EIP
-    DependsOn: PubPrivateVPC
-    Condition: NatGWNeeded
-    Properties:
-      Domain: vpc
-
   ## PRIVATE ROUTING
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
@@ -278,14 +278,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${VPCName}-VPC-Private-Route
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Condition: NatGWNeeded
-    Properties:
-      NatGatewayId: !Ref NatGateway
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Traefik EC2 Instance with SSL Security
+Description: Traefik EC2 Instance with SSL Security (Dual-Stack / IPv6 Compliant)
 
 Parameters:
 
@@ -12,6 +12,7 @@ Parameters:
 
   SubnetId:
     Type: AWS::EC2::Subnet::Id
+    Description: Must be a Public Subnet for internet reachability.
 
   BucketName:
     Type: String
@@ -47,7 +48,7 @@ Conditions:
 
 Resources:
 
-  # --- UPDATED LOCKED DOWN SECURITY GROUP ---
+  # --- UPDATED DUAL-STACK SECURITY GROUP ---
   TraefikSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -57,35 +58,58 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
           Description: Allow all outbound
+        - IpProtocol: -1
+          CidrIpv6: "::/0"
+          Description: Allow all ipv6 outbound
       SecurityGroupIngress:
+        # IPv4 Ingress
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-          Description: SSH access
+          Description: SSH access IPv4
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-          Description: Inbound HTTP
+          Description: Inbound HTTP IPv4
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: Inbound HTTPS
+          Description: Inbound HTTPS IPv4
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
           CidrIp: 0.0.0.0/0
-          Description: Traefik Dashboard
-
+          Description: Traefik Dashboard IPv4
+        # IPv6 Ingress
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: "::/0"
+          Description: SSH access IPv6
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIpv6: "::/0"
+          Description: Inbound HTTP IPv6
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: "::/0"
+          Description: Inbound HTTPS IPv6
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIpv6: "::/0"
+          Description: Traefik Dashboard IPv6
 
   # --- YOUR EXISTING IAM CONFIGURATION ---
   TraefikInstanceRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "Traefik-role-${AWS::AccountId}"
-
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -95,12 +119,10 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - sts:AssumeRole
-
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
-
       Policies:
         - PolicyName: S3Access
           PolicyDocument:
@@ -135,22 +157,17 @@ Resources:
                   - "ec2:DescribeInstances"
                 Resource: "*"
         - PolicyName: ssm-control
-
           PolicyDocument:
             Version: '2012-10-17'
-
             Statement:
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:PutParameter
                 Resource: "*"
-
         - PolicyName: ecs-control
-
           PolicyDocument:
             Version: '2012-10-17'
-
             Statement:
               - Effect: Allow
                 Action:
@@ -159,10 +176,8 @@ Resources:
                   - ecs:UpdateService
                 Resource: "*"
         - PolicyName: route53-control
-
           PolicyDocument:
             Version: '2012-10-17'
-
             Statement:
               - Effect: Allow
                 Action:
@@ -180,13 +195,9 @@ Resources:
   TraefikInstance:
     Type: AWS::EC2::Instance
     Properties:
-
       ImageId: !Sub "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
-
       InstanceType: !Ref InstanceType
-
       IamInstanceProfile: !Ref TraefikInstanceProfile
-
       Tags:
         - Key: Name
           Value: !Sub Traefik
@@ -203,6 +214,7 @@ Resources:
       NetworkInterfaces:
         - DeviceIndex: 0
           SubnetId: !Ref SubnetId
+          Ipv6AddressCount: 1
           GroupSet:
             - !Ref TraefikSecurityGroup
 
@@ -301,24 +313,25 @@ Resources:
           crontab -l 
           
           echo "+++++++++++++ SETTING ROUTE 53 +++++++++++++"
-          # 1. Fetch IMDSv2 Token & Public IP
+          # Fetch the network interface's MAC to query its assigned IPv6 address
           TOKEN=$(curl -s -S -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-          PUBLIC_IP=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+          MAC=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/mac)
+          IPV6_ADDRESS=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/network/interfaces/macs/$MAC/ipv6s)
 
-          # 2. Construct the Route 53 Change Batch Payload
+          # 2. Construct the Route 53 Change Batch Payload with AAAA records
           cat > /tmp/route53-change.json <<EOF
           {
-            "Comment": "Auto-updating A record on instance boot",
+            "Comment": "Auto-updating  AAAA records on instance boot",
             "Changes": [
               {
                 "Action": "UPSERT",
                 "ResourceRecordSet": {
                   "Name": "${DomainName}",
-                  "Type": "A",
+                  "Type": "AAAA",
                   "TTL": 300,
                   "ResourceRecords": [
                     {
-                      "Value": "$PUBLIC_IP"
+                      "Value": "$IPV6_ADDRESS"
                     }
                   ]
                 }
@@ -330,7 +343,9 @@ Resources:
           # 3. Apply the update to Route 53
           aws route53 change-resource-record-sets \
             --hosted-zone-id "${HostedZoneId}" \
-            --change-batch file:///tmp/route53-change.json
+            --change-batch file:///tmp/route53-change.json \
+            --endpoint-url https://route53.global.api.aws \
+            --region us-east-1
           
           echo "========= INIT COMPLETE ========"
 
@@ -338,9 +353,6 @@ Outputs:
 
   InstanceId:
     Value: !Ref TraefikInstance
-
-  PublicIp:
-    Value: !GetAtt TraefikInstance.PublicIp
 
   AvailabilityZone:
     Value: !GetAtt TraefikInstance.AvailabilityZone

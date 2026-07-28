@@ -25,7 +25,8 @@ Parameters:
     Type: String
     Default: 10.0.0.0/8
     Description: >
-      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
+      CIDR allowed to reach NFS port 2049. Use your VPC IPv4 CIDR (e.g., 10.0.0.0/16).
+
   # ── Bucket ─────────────────────────────────────────────────────────────────
   BucketName:
     Type: String
@@ -168,17 +169,19 @@ Resources:
   S3FilesSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Immich S3 Files - NFS ingress managed by app EC2 stacks
+      GroupDescription: Immich S3 Files - Strictly private NFS ingress
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
           CidrIp: !Ref AllowedCIDR
-          Description: Allow connection to APP
+          Description: Allow internal VPC IPv4 connection to APP
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          CidrIpv6: "::/0"
       Tags:
         - Key: Name
           Value: immich-s3files-sg
@@ -192,7 +195,7 @@ Resources:
       AcceptBucketWarning: true           # Required acknowledgement
       SynchronizationConfiguration:
         ExpirationDataRules:
-          - DaysAfterLastAccess: 5
+          - DaysAfterLastAccess: 3
         ImportDataRules:
           - Prefix: ""
             SizeLessThan: 131072
@@ -225,8 +228,7 @@ Outputs:
 
 
   FilesystemId:
-    Description: >
-      S3 Files filesystem ID — pass this as S3FilesystemId in the app EC2 stack.
+    Description: S3 Files filesystem ID
     Value: !Ref ImmichFilesystem
 
 

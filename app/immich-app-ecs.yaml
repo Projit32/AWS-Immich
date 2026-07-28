@@ -1,6 +1,6 @@
 
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich ECS Production V2 - API and Worker Spot Capacity Providers
+Description: Immich ECS Production V2 - Dual-Stack API and Worker Spot Capacity Providers
 
 Parameters:
   VpcId:
@@ -8,6 +8,7 @@ Parameters:
 
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
+    Description: Must be PUBLIC subnets to allow EC2 instances to reach the internet without a NAT Gateway.
 
   S3FilesystemId:
     Type: String
@@ -22,7 +23,7 @@ Parameters:
     Type: String
     Default: 10.0.0.0/8
     Description: >
-      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
+      CIDR allowed to reach API port 2283. Use your VPC IPv4 CIDR for Traefik access.
 
 Resources:
 
@@ -51,7 +52,10 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
-          Description: Allow all outbound
+          Description: Allow all IPv4 outbound
+        - IpProtocol: -1
+          CidrIpv6: "::/0"
+          Description: Allow all IPv6 outbound
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 2283
@@ -109,10 +113,19 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required
+          HttpProtocolIpv6: enabled
+          HttpPutResponseHopLimit: 2
         IamInstanceProfile:
           Arn: !GetAtt ECSInstanceProfile.Arn
-        SecurityGroupIds:
-          - !Ref HostSecurityGroup
+        # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            Ipv6AddressCount: 1
+            Groups:
+              - !Ref HostSecurityGroup
         ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
         CreditSpecification:
           CpuCredits: standard
@@ -121,7 +134,21 @@ Resources:
             #!/bin/bash
             set -euo pipefail
             exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
+            
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            
+            # Force agent to use IPv6 configurations
+            echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
+            
+            # Direct the agent to contact AWS endpoints via dual-stack DNS
+            echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            
+            # Configure the host-level AWS CLI
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
+            
+            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
+            
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
@@ -136,17 +163,41 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required
+          HttpProtocolIpv6: enabled
+          HttpPutResponseHopLimit: 2
+
         IamInstanceProfile:
           Arn: !GetAtt ECSInstanceProfile.Arn
-        SecurityGroupIds:
-          - !Ref HostSecurityGroup
+        # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            Ipv6AddressCount: 1
+            Groups:
+              - !Ref HostSecurityGroup
         ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
             set -euo pipefail
             exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
+            
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+            
+            # Force agent to use IPv6 configurations
+            echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
+            
+            # Direct the agent to contact AWS endpoints via dual-stack DNS
+            echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            
+            # Configure the host-level AWS CLI
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
+            
+            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
+            
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
@@ -238,7 +289,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-api
-      NetworkMode: bridge  # Changed from awsvpc
+      NetworkMode: bridge
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 800
@@ -283,7 +334,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-microservices
-      NetworkMode: bridge  # Changed from awsvpc
+      NetworkMode: bridge
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 3700
@@ -330,7 +381,6 @@ Resources:
         - CapacityProvider: !Ref ApiCapacityProvider
           Weight: 1
       TaskDefinition: !Ref ApiTaskDefinition
-      # NetworkConfiguration removed (not supported in bridge mode)
 
   WorkerService:
     Type: AWS::ECS::Service
@@ -348,7 +398,6 @@ Resources:
         - CapacityProvider: !Ref WorkerCapacityProvider
           Weight: 1
       TaskDefinition: !Ref WorkerTaskDefinition
-      # NetworkConfiguration removed (not supported in bridge mode)
 
 Outputs:
   ClusterName:

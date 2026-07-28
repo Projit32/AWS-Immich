@@ -24,6 +24,9 @@ Parameters:
   ECSClusterName:
     Type: String
 
+  ECSServiceNames:
+    Type: String
+
 Globals:
 
   Function:
@@ -186,6 +189,8 @@ Resources:
           SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
 
           ECS_CLUSTER_NAME: !Ref ECSClusterName
+
+          ECS_SERVICE_NAMES: !Ref ECSServiceNames
 
   ComposerLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'

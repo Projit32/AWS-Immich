@@ -14,7 +14,8 @@ parameter_overrides = [
   "VolumeId=vol-0cf3e9a98f1b471e8",
   "HostedZoneId=Z02289381ARPAOGOTJFBT",               # Tighten this to your actual VPC CIDR
   "RecordName=backend.ap-south-2.immich.internal",
-  "ECSClusterName=immich-cluster"
+  "ECSClusterName=immich-cluster",
+  "ECSServiceNames=immich-api-service"
 ]
 
 # Tags applied to all resources in the stack
