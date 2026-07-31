@@ -264,6 +264,7 @@ Resources:
               ExecStop=/usr/bin/docker stop -t 60 immich-postgres
               ExecStopPost=/usr/bin/sync
               ExecStopPost=-/usr/bin/docker rm -f immich-postgres
+              TimeoutStopSpec=70
 
               [Install]
               WantedBy=multi-user.target
@@ -294,11 +295,12 @@ Resources:
                 -p 6379:6379 \
                 -v /data/valkey:/data \
                 valkey/valkey:9 \
-                valkey-server --save 900 1 --appendonly yes
+                valkey-server --save 900 1 --appendonly yes --maxmemory-policy noeviction
               
               ExecStop=/usr/bin/docker stop -t 20 valkey-server
               
               ExecStopPost=-/usr/bin/docker rm -f valkey-server
+              TimeoutStopSpec=30
               
               [Install]
               WantedBy=multi-user.target

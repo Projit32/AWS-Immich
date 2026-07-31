@@ -25,6 +25,9 @@ Parameters:
     Description: >
       CIDR allowed to reach API port 2283. Use your VPC IPv4 CIDR for Traefik access.
 
+  ImageName:
+    Type: String
+
 Resources:
 
   ECSCluster:
@@ -62,6 +65,11 @@ Resources:
           ToPort: 2283
           CidrIp: !Ref AllowedCIDR
           Description: Allow connection to APP
+        - IpProtocol: tcp
+          FromPort: 2283
+          ToPort: 2283
+          CidrIpv6: "::/0"
+          Description: Allow connection to APP IPV6
 
   ECSInstanceRole:
     Type: AWS::IAM::Role
@@ -300,7 +308,7 @@ Resources:
             SourcePath: /mnt/immich/upload
       ContainerDefinitions:
         - Name: immich-api
-          Image: ghcr.io/immich-app/immich-server:release
+          Image: !Ref ImageName
           Essential: true
           Cpu: 2048
           Memory: 800
@@ -345,7 +353,7 @@ Resources:
             SourcePath: /mnt/immich/upload
       ContainerDefinitions:
         - Name: immich-microservices
-          Image: ghcr.io/immich-app/immich-server:release
+          Image: !Ref ImageName
           Essential: true
           Cpu: 2048
           Memory: 3700

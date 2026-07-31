@@ -229,6 +229,14 @@ Resources:
       DestinationIpv6CidrBlock: "::/0"
       GatewayId: !Ref InternetGateway
 
+  PublicRouteIPV4:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:

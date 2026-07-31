@@ -1,0 +1,14 @@
+version = 0.1
+
+# ── EC2 Stack ───────────────────────────────────────────────────────────────
+[ecr.deploy.parameters]
+stack_name        = "immich-ecr"
+template_file     = "immich-ecr.yaml"
+region            = "us-east-1"
+capabilities      = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+
+tags = [
+  "Project=immich"
+]

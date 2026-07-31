@@ -231,6 +231,17 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
           exec > >(tee /var/log/traefik.log | logger -t traefik) 2>&1
+          
+          # Direct the agent to contact AWS endpoints via dual-stack DNS
+          echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+          
+          # Configure the host-level AWS CLI
+          echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+          chmod +x /etc/profile.d/aws-ipv6.sh
+          export AWS_USE_DUALSTACK_ENDPOINT=true
+          echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
+          
+          aws configure set default.use_dualstack_endpoint true
 
           until systemctl is-active --quiet docker; do
             sleep 2
@@ -270,12 +281,11 @@ Resources:
 
           ExecStart=/usr/bin/docker run \
             --name traefik \
+            --net=host \
             --restart unless-stopped \
-            -p 80:80 \
-            -p 443:443 \
-            -p 8080:8080 \
             -v /opt/traefik/acme.json:/etc/traefik/acme.json \
             -e AWS_REGION=${AWS::Region} \
+            -e AWS_USE_DUALSTACK_ENDPOINT=true \
             traefik:latest \
             --api.insecure=true \
             --providers.ecs=true \

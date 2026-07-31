@@ -11,7 +11,7 @@ resolve_s3 = true
 
 parameter_overrides = [
   "SpotLaunchTemplateId=lt-03dc06539a177caa1",
-  "VolumeId=vol-0cf3e9a98f1b471e8",
+  "VolumeId=vol-0eff706947d42e7b6",
   "HostedZoneId=Z02289381ARPAOGOTJFBT",               # Tighten this to your actual VPC CIDR
   "RecordName=backend.ap-south-2.immich.internal",
   "ECSClusterName=immich-cluster",

@@ -17,10 +17,6 @@ Parameters:
     Description: >
       Subnets for S3 Files mount targets.
 
-  VPCEndpointId:
-    Type: String
-    Description: S3 Gateway endpoint
-
   AllowedCIDR:
     Type: String
     Default: 10.0.0.0/8
@@ -81,34 +77,6 @@ Resources:
       Tags:
         - Key: Name
           Value: immich-media-s3
-
-  ImmichBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref ImmichBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: DenyDataTrafficOutsideVPCEndpoint
-            Effect: Deny
-            Principal: "*"
-            Action:
-              # Object-level data permissions (fetching, putting, deleting)
-              - "s3:GetObject"
-              - "s3:PutObject"
-              - "s3:DeleteObject"
-              - "s3:GetObjectVersion"
-              # Bucket-level data permissions (listing)
-              - "s3:ListBucket"
-              - "s3:GetBucketLocation"
-            Resource:
-              # ListBucket applies to the bucket ARN itself
-              - !Sub "arn:aws:s3:::${ImmichBucket}"
-              # Get/Put/Delete apply to the objects inside
-              - !Sub "arn:aws:s3:::${ImmichBucket}/*"
-            Condition:
-              StringNotEquals:
-                "aws:sourceVpce": !Ref VPCEndpointId
 
   # ── IAM Role for S3 Files ──────────────────────────────────────────────────
   # S3 Files requires an IAM role to access the bucket on behalf of the filesystem.
