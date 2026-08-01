@@ -31,9 +31,15 @@ Parameters:
     Type: String
     Default: ""
 
-  PrivateSubnetId:
+  SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: Private Subnet for the EC2 instance.
+
+  ValkeyImage:
+    Type: String
+
+  PostgresImage:
+    Type: String
 
 Conditions:
   HasKey: !Not [ !Equals [ !Ref KeyPair, "" ] ]
@@ -69,6 +75,9 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
           Description: Allow all outbound
+        - IpProtocol: -1
+          CidrIpv6: "::/0"
+          Description: Allow all IPV6 outbound
       Tags:
         - Key: Name
           Value: !Sub immich-db-cache-sg
@@ -140,7 +149,8 @@ Resources:
 
         NetworkInterfaces:
           - DeviceIndex: 0
-            SubnetId: !Ref PrivateSubnetId
+            Ipv6AddressCount: 1
+            SubnetId: !Ref SubnetId
             Groups:
               - !Ref DBCacheSecurityGroup
         
@@ -168,6 +178,16 @@ Resources:
               set -euo pipefail
 
               exec > >(tee /var/log/immich-db-init.log | logger -t immich-db-init) 2>&1
+            
+              # Force agent to use IPv6 configurations
+              echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
+              
+              # Direct the agent to contact AWS endpoints via dual-stack DNS
+              echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+              
+              # Configure the host-level AWS CLI
+              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
 
               echo "Waiting for EBS attachment..."
 
@@ -226,14 +246,12 @@ Resources:
               echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
               
       
-              # ── 5. Pull Immich Postgres and Valkey image from S3 ──────────────────────────────────
+              # ── 5. Pull Immich Postgres and Valkey image from ECR ──────────────────────────────────
               echo "Downloading images"
             
-              aws s3 cp ${ImageLocationS3Uri}/valkey.tar .
-              docker load -i valkey.tar
+              docker pull ${ValkeyImage}
             
-              aws s3 cp ${ImageLocationS3Uri}/postgres.tar .
-              docker load -i postgres.tar
+              docker pull ${PostgresImage}
               
             
               # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
@@ -259,7 +277,7 @@ Resources:
                 -e POSTGRES_PASSWORD="$DB_PASS" \
                 -e POSTGRES_DB="$DB_NAME" \
                 -v /data/postgres/data:/var/lib/postgresql/data \
-                ghcr.io/immich-app/postgres:14-vectorchord0.4.3
+                ${PostgresImage}
 
               ExecStop=/usr/bin/docker stop -t 60 immich-postgres
               ExecStopPost=/usr/bin/sync
@@ -294,7 +312,7 @@ Resources:
                 --restart always \
                 -p 6379:6379 \
                 -v /data/valkey:/data \
-                valkey/valkey:9 \
+                ${ValkeyImage} \
                 valkey-server --save 900 1 --appendonly yes --maxmemory-policy noeviction
               
               ExecStop=/usr/bin/docker stop -t 20 valkey-server
@@ -336,7 +354,7 @@ Resources:
 
         NetworkInterfaces:
           - DeviceIndex: 0
-            SubnetId: !Ref PrivateSubnetId
+            SubnetId: !Ref SubnetId
             Groups:
               - !Ref DBCacheSecurityGroup
 
@@ -361,6 +379,16 @@ Resources:
               set -euo pipefail
 
               exec > >(tee /var/log/immich-db-init.log | logger -t immich-db-init) 2>&1
+            
+              # Force agent to use IPv6 configurations
+              echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
+              
+              # Direct the agent to contact AWS endpoints via dual-stack DNS
+              echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+              
+              # Configure the host-level AWS CLI
+              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
 
               echo "Waiting for EBS attachment..."
 
@@ -419,14 +447,12 @@ Resources:
               echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
               
       
-              # ── 5. Pull Immich Postgres and Valkey image from S3 ──────────────────────────────────
+              # ── 5. Pull Immich Postgres and Valkey image from ECR ──────────────────────────────────
               echo "Downloading images"
             
-              aws s3 cp ${ImageLocationS3Uri}/valkey.tar .
-              docker load -i valkey.tar
+              docker pull ${ValkeyImage}
             
-              aws s3 cp ${ImageLocationS3Uri}/postgres.tar .
-              docker load -i postgres.tar
+              docker pull ${PostgresImage}
               
             
               # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
@@ -452,11 +478,12 @@ Resources:
                 -e POSTGRES_PASSWORD="$DB_PASS" \
                 -e POSTGRES_DB="$DB_NAME" \
                 -v /data/postgres/data:/var/lib/postgresql/data \
-                ghcr.io/immich-app/postgres:14-vectorchord0.4.3
+                ${PostgresImage}
 
               ExecStop=/usr/bin/docker stop -t 60 immich-postgres
               ExecStopPost=/usr/bin/sync
               ExecStopPost=-/usr/bin/docker rm -f immich-postgres
+              TimeoutStopSpec=70
 
               [Install]
               WantedBy=multi-user.target
@@ -486,12 +513,13 @@ Resources:
                 --restart always \
                 -p 6379:6379 \
                 -v /data/valkey:/data \
-                valkey/valkey:9 \
-                valkey-server --save 900 1 --appendonly yes
+                ${ValkeyImage} \
+                valkey-server --save 900 1 --appendonly yes --maxmemory-policy noeviction
               
               ExecStop=/usr/bin/docker stop -t 20 valkey-server
               
               ExecStopPost=-/usr/bin/docker rm -f valkey-server
+              TimeoutStopSpec=30
               
               [Install]
               WantedBy=multi-user.target
@@ -500,5 +528,4 @@ Resources:
               systemctl daemon-reload
               systemctl enable valkey.service
               systemctl start valkey.service
-            
               echo "INIT Success"

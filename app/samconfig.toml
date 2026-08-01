@@ -15,7 +15,7 @@ parameter_overrides = [
   "S3FilesystemId=fs-0cb352e1b01128274",
   "EnvFileS3Arn=arn:aws:s3:::immich-conf-ap-south-2-704678691702/immich.env",
   "HostName=immich.proapplication.net",
-  "ImageName=ecr-public.aws.com/<your-repo>/immich/immich-server:release"
+  "ImageName=ecr-public.aws.com/<your-alias>/immich/immich-server:release"
 ]
 
 tags = [

@@ -142,7 +142,7 @@ def switch_ecs_services(cluster_name: str, service_names:list[str] = list(), des
                         )
                         print(f"Successfully switched '{service_name}'.")
                     else:
-                        print(f"Service '{service_name}' not found in cluster {cluster_name}.") # todo: changhe this
+                        print(f"Service '{service_name}' is not supposed to change.")
 
     except Exception as e:
         print(f"An error occurred switching service: {e}")

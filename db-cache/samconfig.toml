@@ -44,9 +44,10 @@ parameter_overrides = [
   "InstanceType=t4g.micro",
   "AllowedCIDR=10.0.0.0/16",              # Tighten this to your actual VPC CIDR
   "EnvFileS3URI=s3://immich-conf-ap-south-2-704678691702/immich.env",
-  "ImageLocationS3Uri=s3://immich-conf-ap-south-2-704678691702/images",
   "KeyPair=immich",
-  "PrivateSubnetId=subnet-0facb9837feac8aa0"
+  "SubnetId=subnet-0436d6552c6a53c4f",
+  "ValkeyImage=ecr-public.aws.com/<your-alias>/immich/valkey:9",
+  "PostgresImage=ecr-public.aws.com/<your-alias>/immich/postgres:14-vectorchord0.4.3"
 ]
 
 # Tags applied to all resources in the stack
