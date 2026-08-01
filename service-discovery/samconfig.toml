@@ -19,7 +19,8 @@ parameter_overrides = [
   "EnvFileS3URI=s3://immich-conf-ap-south-2-704678691702",
   "HostedZoneId=Z0716017FNQSL38BA6TG",
   "DomainName=immich.proapplication.net",
-  "AcmeEmail=projitchandra32@gmail.com"
+  "AcmeEmail=projitchandra32@gmail.com",
+  "InstanceMarketType=on-demand"
 ]
 
 tags = [

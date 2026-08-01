@@ -178,6 +178,7 @@ Resources:
     Type: AWS::S3Files::MountTarget
     Properties:
       FileSystemId: !Ref ImmichFilesystem
+      IpAddressType: IPV4_ONLY          # <-- Enforces IPv4-only allocation
       SubnetId: !Ref SubnetId
       SecurityGroups:
         - !Ref S3FilesSG

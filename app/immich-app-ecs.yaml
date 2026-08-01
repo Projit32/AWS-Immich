@@ -125,6 +125,11 @@ Resources:
           HttpTokens: required
           HttpProtocolIpv6: enabled
           HttpPutResponseHopLimit: 2
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub Immich-API
         IamInstanceProfile:
           Arn: !GetAtt ECSInstanceProfile.Arn
         # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
@@ -175,6 +180,12 @@ Resources:
           HttpTokens: required
           HttpProtocolIpv6: enabled
           HttpPutResponseHopLimit: 2
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub Immich-Worker
 
         IamInstanceProfile:
           Arn: !GetAtt ECSInstanceProfile.Arn

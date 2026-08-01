@@ -1,11 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Traefik EC2 Instance with SSL Security (Dual-Stack / IPv6 Compliant)
+Description: Traefik EC2 Instance with SSL Security (Dual-Stack / IPv6 Compliant) - Launch Template & ASG
 
 Parameters:
 
   InstanceType:
     Type: String
     Default: t4g.nano
+
+  InstanceMarketType:
+    Type: String
+    Default: spot
+    AllowedValues:
+      - spot
+      - on-demand
+    Description: Select whether to launch Spot or On-Demand instances.
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -30,7 +38,7 @@ Parameters:
   EnvFileS3URI:
     Type: String
 
-  # --- NEW PARAMETERS FOR SSL & ROUTE 53 ---
+  # --- PARAMETERS FOR SSL & ROUTE 53 ---
   HostedZoneId:
     Type: AWS::Route53::HostedZone::Id
     Description: The Route 53 Public Hosted Zone ID for your domain.
@@ -44,11 +52,12 @@ Parameters:
     Description: Email address used for Let's Encrypt SSL certificate registration.
 
 Conditions:
-  HasKey: !Not [!Equals [!Ref KeyPair, ""] ]
+  HasKey: !Not [!Equals [!Ref KeyPair, ""]]
+  IsSpot: !Equals [!Ref InstanceMarketType, "spot"]
 
 Resources:
 
-  # --- UPDATED DUAL-STACK SECURITY GROUP ---
+  # --- DUAL-STACK SECURITY GROUP ---
   TraefikSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -105,7 +114,7 @@ Resources:
           CidrIpv6: "::/0"
           Description: Traefik Dashboard IPv6
 
-  # --- YOUR EXISTING IAM CONFIGURATION ---
+  # --- IAM CONFIGURATION ---
   TraefikInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -191,181 +200,208 @@ Resources:
       Roles:
         - !Ref TraefikInstanceRole
 
-  # --- YOUR EXISTING EC2 INSTANCE DEFINITION ---
-  TraefikInstance:
-    Type: AWS::EC2::Instance
+  # --- LAUNCH TEMPLATE ---
+  TraefikLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      ImageId: !Sub "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
-      InstanceType: !Ref InstanceType
-      IamInstanceProfile: !Ref TraefikInstanceProfile
+      LaunchTemplateName: !Sub "immich-SD-launch-template"
+      LaunchTemplateData:
+        ImageId: !Sub "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt TraefikInstanceProfile.Arn
+        KeyName: !If
+          - HasKey
+          - !Ref KeyPair
+          - !Ref AWS::NoValue
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref TraefikSecurityGroup
+            Ipv6AddressCount: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeType: gp3
+              VolumeSize: 30
+              DeleteOnTermination: true
+              Encrypted: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub Traefik
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > >(tee /var/log/traefik.log | logger -t traefik) 2>&1
+            
+            # Direct the agent to contact AWS endpoints via dual-stack DNS
+            echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            
+            # Configure the host-level AWS CLI
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+            chmod +x /etc/profile.d/aws-ipv6.sh
+            export AWS_USE_DUALSTACK_ENDPOINT=true
+            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
+            
+            aws configure set default.use_dualstack_endpoint true
+
+            until systemctl is-active --quiet docker; do
+              sleep 2
+            done
+            
+            dnf install valkey cronie -y
+            systemctl enable --now crond
+            
+            mkdir -p /opt/scheduled /opt/traefik
+            
+            # Create and set strict permissions for SSL certificate storage
+            aws s3 cp ${EnvFileS3URI}/acme.json /opt/traefik/acme.json || touch /opt/traefik/acme.json
+            chmod 600 /opt/traefik/acme.json
+
+            aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
+            chmod +x /opt/scheduled/microservice-cache-check.sh
+            aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
+            chmod +x /opt/scheduled/ml-cache-check.sh
+            aws s3 cp "${EnvFileS3URI}"/immich.env /opt/scheduled/var.env
+            source /opt/scheduled/var.env   
+                    
+            aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
+            docker load -i traefik.tar
+            
+            cat >/etc/systemd/system/traefik.service <<'EOF'
+            [Unit]
+            Description=Traefik
+            Requires=docker.service
+            After=docker.service
+
+            [Service]
+            Type=simple
+            Restart=always
+            RestartSec=5
+
+            ExecStartPre=-/usr/bin/docker rm -f traefik
+
+            ExecStart=/usr/bin/docker run \
+              --name traefik \
+              --net=host \
+              --restart unless-stopped \
+              -v /opt/traefik/acme.json:/etc/traefik/acme.json \
+              -e AWS_REGION=${AWS::Region} \
+              -e AWS_USE_DUALSTACK_ENDPOINT=true \
+              traefik:latest \
+              --api.insecure=true \
+              --providers.ecs=true \
+              --providers.ecs.clusters=immich-cluster \
+              --providers.ecs.region=${AWS::Region} \
+              --providers.ecs.exposedByDefault=false \
+              --entrypoints.web.address=:80 \
+              --entrypoints.websecure.address=:443 \
+              --entrypoints.web.http.redirections.entryPoint.to=websecure \
+              --entrypoints.web.http.redirections.entryPoint.scheme=https \
+              --certificatesresolvers.le.acme.httpchallenge=true \
+              --certificatesresolvers.le.acme.httpchallenge.entrypoint=web \
+              --certificatesresolvers.le.acme.email=${AcmeEmail} \
+              --certificatesresolvers.le.acme.storage=/etc/traefik/acme.json \
+              --entrypoints.websecure.transport.respondingtimeouts.readtimeout=3600s \
+              --entrypoints.websecure.transport.respondingtimeouts.idletimeout=3600s
+
+            ExecStop=/usr/bin/docker stop -t 20 traefik
+
+            ExecStopPost=-/usr/bin/docker rm -f traefik
+            ExecStopPost=-/usr/bin/aws s3 cp /opt/traefik/acme.json ${EnvFileS3URI}/acme.json 
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            systemctl daemon-reload
+            systemctl enable traefik.service
+            systemctl start traefik.service
+            
+            echo "Adding crontab entry"
+            echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $BACKEND_SSM_PARAM_NAME $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME $REDIS_HOSTNAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
+            crontab /tmp/mycrontab
+            
+            crontab -l 
+            
+            echo "+++++++++++++ SETTING ROUTE 53 +++++++++++++"
+            # Fetch the network interface's MAC to query its assigned IPv6 address
+            TOKEN=$(curl -s -S -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            MAC=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/mac)
+            IPV6_ADDRESS=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/network/interfaces/macs/$MAC/ipv6s)
+
+            # Construct the Route 53 Change Batch Payload with AAAA records
+            cat > /tmp/route53-change.json <<EOF
+            {
+              "Comment": "Auto-updating AAAA records on instance boot",
+              "Changes": [
+                {
+                  "Action": "UPSERT",
+                  "ResourceRecordSet": {
+                    "Name": "${DomainName}",
+                    "Type": "AAAA",
+                    "TTL": 300,
+                    "ResourceRecords": [
+                      {
+                        "Value": "$IPV6_ADDRESS"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            EOF
+
+            # Apply the update to Route 53
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id "${HostedZoneId}" \
+              --change-batch file:///tmp/route53-change.json \
+              --endpoint-url https://route53.global.api.aws \
+              --region us-east-1
+            
+            echo "========= INIT COMPLETE ========"
+
+  # --- AUTO SCALING GROUP ---
+  TraefikAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      VPCZoneIdentifier:
+        - !Ref SubnetId
+      MinSize: "0"
+      MaxSize: "1"
+      DesiredCapacity: "1"
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref TraefikLaunchTemplate
+            Version: !GetAtt TraefikLaunchTemplate.LatestVersionNumber
+          Overrides:
+            - InstanceType: !Ref InstanceType
+        InstancesDistribution:
+          OnDemandBaseCapacity: !If [IsSpot, 0, 1]
+          OnDemandPercentageAboveBaseCapacity: !If [IsSpot, 0, 100]
+          SpotAllocationStrategy: price-capacity-optimized
       Tags:
         - Key: Name
           Value: !Sub Traefik
-
-      KeyName: !If
-        - HasKey
-        - !Ref KeyPair
-        - !Ref AWS::NoValue
-
-      MetadataOptions:
-        HttpEndpoint: enabled
-        HttpTokens: required
-
-      NetworkInterfaces:
-        - DeviceIndex: 0
-          SubnetId: !Ref SubnetId
-          Ipv6AddressCount: 1
-          GroupSet:
-            - !Ref TraefikSecurityGroup
-
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs:
-            VolumeType: gp3
-            VolumeSize: 30
-            DeleteOnTermination: true
-            Encrypted: true
-
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          set -euxo pipefail
-          exec > >(tee /var/log/traefik.log | logger -t traefik) 2>&1
-          
-          # Direct the agent to contact AWS endpoints via dual-stack DNS
-          echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
-          
-          # Configure the host-level AWS CLI
-          echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
-          chmod +x /etc/profile.d/aws-ipv6.sh
-          export AWS_USE_DUALSTACK_ENDPOINT=true
-          echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
-          
-          aws configure set default.use_dualstack_endpoint true
-
-          until systemctl is-active --quiet docker; do
-            sleep 2
-          done
-          
-          dnf install valkey cronie -y
-          systemctl enable --now crond
-          
-          mkdir -p /opt/scheduled /opt/traefik
-          
-          # Create and set strict permissions for SSL certificate storage
-          aws s3 cp ${EnvFileS3URI}/acme.json /opt/traefik/acme.json || touch /opt/traefik/acme.json
-          chmod 600 /opt/traefik/acme.json
-
-          aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
-          chmod +x /opt/scheduled/microservice-cache-check.sh
-          aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
-          chmod +x /opt/scheduled/ml-cache-check.sh
-          aws s3 cp "${EnvFileS3URI}"/immich.env /opt/scheduled/var.env
-          source /opt/scheduled/var.env   
-                  
-          aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
-          docker load -i traefik.tar
-          
-          cat >/etc/systemd/system/traefik.service <<'EOF'
-          [Unit]
-          Description=Traefik
-          Requires=docker.service
-          After=docker.service
-
-          [Service]
-          Type=simple
-          Restart=always
-          RestartSec=5
-
-          ExecStartPre=-/usr/bin/docker rm -f traefik
-
-          ExecStart=/usr/bin/docker run \
-            --name traefik \
-            --net=host \
-            --restart unless-stopped \
-            -v /opt/traefik/acme.json:/etc/traefik/acme.json \
-            -e AWS_REGION=${AWS::Region} \
-            -e AWS_USE_DUALSTACK_ENDPOINT=true \
-            traefik:latest \
-            --api.insecure=true \
-            --providers.ecs=true \
-            --providers.ecs.clusters=immich-cluster \
-            --providers.ecs.region=${AWS::Region} \
-            --providers.ecs.exposedByDefault=false \
-            --entrypoints.web.address=:80 \
-            --entrypoints.websecure.address=:443 \
-            --entrypoints.web.http.redirections.entryPoint.to=websecure \
-            --entrypoints.web.http.redirections.entryPoint.scheme=https \
-            --certificatesresolvers.le.acme.httpchallenge=true \
-            --certificatesresolvers.le.acme.httpchallenge.entrypoint=web \
-            --certificatesresolvers.le.acme.email=${AcmeEmail} \
-            --certificatesresolvers.le.acme.storage=/etc/traefik/acme.json \
-            --entrypoints.websecure.transport.respondingtimeouts.readtimeout=3600s \
-            --entrypoints.websecure.transport.respondingtimeouts.idletimeout=3600s
-
-          ExecStop=/usr/bin/docker stop -t 20 traefik
-
-          ExecStopPost=-/usr/bin/docker rm -f traefik
-          ExecStopPost=-/usr/bin/aws s3 cp /opt/traefik/acme.json ${EnvFileS3URI}/acme.json 
-
-          [Install]
-          WantedBy=multi-user.target
-          EOF
-
-          systemctl daemon-reload
-          systemctl enable traefik.service
-          systemctl start traefik.service
-          
-          echo "Adding crontab entry"
-          echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $BACKEND_SSM_PARAM_NAME $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME $REDIS_HOSTNAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
-          crontab /tmp/mycrontab
-          
-          crontab -l 
-          
-          echo "+++++++++++++ SETTING ROUTE 53 +++++++++++++"
-          # Fetch the network interface's MAC to query its assigned IPv6 address
-          TOKEN=$(curl -s -S -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-          MAC=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/mac)
-          IPV6_ADDRESS=$(curl -s -S -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/network/interfaces/macs/$MAC/ipv6s)
-
-          # 2. Construct the Route 53 Change Batch Payload with AAAA records
-          cat > /tmp/route53-change.json <<EOF
-          {
-            "Comment": "Auto-updating  AAAA records on instance boot",
-            "Changes": [
-              {
-                "Action": "UPSERT",
-                "ResourceRecordSet": {
-                  "Name": "${DomainName}",
-                  "Type": "AAAA",
-                  "TTL": 300,
-                  "ResourceRecords": [
-                    {
-                      "Value": "$IPV6_ADDRESS"
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-          EOF
-
-          # 3. Apply the update to Route 53
-          aws route53 change-resource-record-sets \
-            --hosted-zone-id "${HostedZoneId}" \
-            --change-batch file:///tmp/route53-change.json \
-            --endpoint-url https://route53.global.api.aws \
-            --region us-east-1
-          
-          echo "========= INIT COMPLETE ========"
+          PropagateAtLaunch: true
 
 Outputs:
 
-  InstanceId:
-    Value: !Ref TraefikInstance
+  AutoScalingGroupName:
+    Description: Name of the Auto Scaling Group
+    Value: !Ref TraefikAutoScalingGroup
 
-  AvailabilityZone:
-    Value: !GetAtt TraefikInstance.AvailabilityZone
+  LaunchTemplateId:
+    Description: ID of the Launch Template
+    Value: !Ref TraefikLaunchTemplate
 
   SecurityGroupId:
     Value: !Ref TraefikSecurityGroup
