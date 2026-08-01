@@ -16,30 +16,6 @@ Resources:
           - x86-64
           - ARM 64
 
-  ImmichPostgresRepository:
-    Type: AWS::ECR::PublicRepository
-    Properties:
-      RepositoryName: immich/postgres
-      RepositoryCatalogData:
-        RepositoryDescription: Public container repository for Immich PostgreSQL
-        OperatingSystems:
-          - Linux
-        Architectures:
-          - x86-64
-          - ARM 64
-
-  ImmichValkeyRepository:
-    Type: AWS::ECR::PublicRepository
-    Properties:
-      RepositoryName: immich/valkey
-      RepositoryCatalogData:
-        RepositoryDescription: Public container repository for Immich Valkey cache
-        OperatingSystems:
-          - Linux
-        Architectures:
-          - x86-64
-          - ARM 64
-
   ImmichTraefikRepository:
     Type: AWS::ECR::PublicRepository
     Properties:
@@ -56,14 +32,6 @@ Outputs:
   ImmichServerRepositoryArn:
     Description: ARN of the immich/immich-server public ECR repository
     Value: !GetAtt ImmichServerRepository.Arn
-
-  ImmichPostgresRepositoryArn:
-    Description: ARN of the immich/postgres public ECR repository
-    Value: !GetAtt ImmichPostgresRepository.Arn
-
-  ImmichValkeyRepositoryArn:
-    Description: ARN of the immich/valkey public ECR repository
-    Value: !GetAtt ImmichValkeyRepository.Arn
 
   ImmichTraefikRepositoryArn:
     Description: ARN of the immich/traefik public ECR repository
