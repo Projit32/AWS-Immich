@@ -28,6 +28,13 @@ Parameters:
   ImageName:
     Type: String
 
+  KeyPair:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasKey: !Not [ !Equals [ !Ref KeyPair, "" ] ]
+
 Resources:
 
   ECSCluster:
@@ -70,6 +77,11 @@ Resources:
           ToPort: 2283
           CidrIpv6: "::/0"
           Description: Allow connection to APP IPV6
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCIDR
+          Description: SSH access
 
   ECSInstanceRole:
     Type: AWS::IAM::Role
@@ -121,6 +133,10 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
+        KeyName: !If
+          - HasKey
+          - !Ref KeyPair
+          - !Ref AWS::NoValue
         MetadataOptions:
           HttpTokens: required
           HttpProtocolIpv6: enabled
