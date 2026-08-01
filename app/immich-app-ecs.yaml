@@ -1,6 +1,6 @@
 
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich ECS Production V2 - Dual-Stack API on EC2 and Worker on Fargate Spot
+Description: Immich ECS Production V2 - Dual-Stack API on EC2
 
 Parameters:
   VpcId:
@@ -58,7 +58,7 @@ Resources:
   HostSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Immich ECS Hosts
+      GroupDescription: Immich ECS Hosts and Tasks
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: -1
@@ -165,6 +165,7 @@ Resources:
             set -euo pipefail
             exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
             
+            # Configure ECS agent
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
             
             # Force agent to use IPv6 configurations
@@ -172,13 +173,13 @@ Resources:
             
             # Direct the agent to contact AWS endpoints via dual-stack DNS
             echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
             
-            # Configure the host-level AWS CLI
+            # Configure host AWS CLI
             echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
             echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
             
-            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
-            
+            # Mount S3 Filesystem
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
@@ -221,6 +222,7 @@ Resources:
             set -euo pipefail
             exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
             
+            # Configure ECS agent
             echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
             
             # Force agent to use IPv6 configurations
@@ -228,13 +230,13 @@ Resources:
             
             # Direct the agent to contact AWS endpoints via dual-stack DNS
             echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
             
-            # Configure the host-level AWS CLI
+            # Configure host AWS CLI
             echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
             echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
             
-            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
-            
+            # Mount S3 Filesystem
             mkdir -p /mnt/immich
             if ! mountpoint -q /mnt/immich; then
               mount -t s3files ${S3FilesystemId}:/ /mnt/immich
@@ -328,7 +330,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-api
-      NetworkMode: bridge
+      NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 800
@@ -373,7 +375,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: immich-microservices
-      NetworkMode: bridge
+      NetworkMode: awsvpc
       RequiresCompatibilities: [EC2]
       Cpu: 2048
       Memory: 3700
@@ -413,6 +415,11 @@ Resources:
       ServiceName: "immich-api-service"
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref HostSecurityGroup
       DeploymentConfiguration:
         MinimumHealthyPercent: 0
         MaximumPercent: 100
@@ -430,6 +437,11 @@ Resources:
       Cluster: !Ref ECSCluster
       DesiredCount: 0
       AvailabilityZoneRebalancing: DISABLED
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref HostSecurityGroup
       DeploymentConfiguration:
         MinimumHealthyPercent: 0
         MaximumPercent: 100
