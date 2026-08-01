@@ -529,3 +529,9 @@ Resources:
               systemctl enable valkey.service
               systemctl start valkey.service
               echo "INIT Success"
+
+  ODLaunchTemplate:
+    Value: !Ref OnDemandLaunchTemplate
+
+  SPOTLaunchTemplate:
+    Value: !Ref SpotLaunchTemplate

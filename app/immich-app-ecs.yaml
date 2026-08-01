@@ -1,6 +1,6 @@
 
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich ECS Production V2 - Dual-Stack API and Worker Spot Capacity Providers
+Description: Immich ECS Production V2 - Dual-Stack API on EC2 and Worker on Fargate Spot
 
 Parameters:
   VpcId:
@@ -12,6 +12,7 @@ Parameters:
 
   S3FilesystemId:
     Type: String
+    Description: The ID of your S3 Files filesystem (e.g., fs-0123456789abcdef0).
 
   EnvFileS3Arn:
     Type: String
@@ -132,6 +133,7 @@ Resources:
   ApiLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
+      LaunchTemplateName: !Sub "immich-api-lt"
       LaunchTemplateData:
         KeyName: !If
           - HasKey
@@ -148,7 +150,6 @@ Resources:
                 Value: !Sub Immich-API
         IamInstanceProfile:
           Arn: !GetAtt ECSInstanceProfile.Arn
-        # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: false
@@ -191,6 +192,7 @@ Resources:
   WorkerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
+      LaunchTemplateName: !Sub "immich-worker-lt"
       LaunchTemplateData:
         MetadataOptions:
           HttpTokens: required
@@ -246,6 +248,7 @@ Resources:
   ApiASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: !Sub "immich-api-asg"
       MinSize: "0"
       MaxSize: "3"
       DesiredCapacity: "0"
@@ -266,6 +269,7 @@ Resources:
   WorkerASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: !Sub "immich-worker-asg"
       MinSize: "0"
       MaxSize: "3"
       DesiredCapacity: "0"
@@ -443,3 +447,9 @@ Outputs:
 
   WorkerServiceName:
     Value: !Ref WorkerService
+
+  APILaunchTemplate:
+    Value: !Ref ApiLaunchTemplate
+
+  WorkerLaunchTemplate:
+    Value: !Ref WorkerLaunchTemplate
