@@ -73,11 +73,6 @@ Resources:
       SecurityGroupIngress:
         # IPv4 Ingress
         - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-          Description: SSH access IPv4
-        - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
@@ -93,11 +88,6 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: Traefik Dashboard IPv4
         # IPv6 Ingress
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIpv6: "::/0"
-          Description: SSH access IPv6
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
