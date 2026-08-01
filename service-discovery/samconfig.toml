@@ -13,14 +13,14 @@ parameter_overrides = [
   "VpcId=vpc-09f10291c29a1a7cf",
   "SubnetId=subnet-0436d6552c6a53c4f",
   "BucketName=immich-conf-ap-south-2-704678691702",
-  "ImageLocationS3Uri=s3://immich-conf-ap-south-2-704678691702/images",
   "InstanceType=t4g.small",
   "CronScriptsS3URI=s3://immich-conf-ap-south-2-704678691702/scripts",
   "EnvFileS3URI=s3://immich-conf-ap-south-2-704678691702",
   "HostedZoneId=Z0716017FNQSL38BA6TG",
   "DomainName=immich.proapplication.net",
   "AcmeEmail=projitchandra32@gmail.com",
-  "InstanceMarketType=on-demand"
+  "InstanceMarketType=on-demand",
+  "TraefikImageName=ecr-public.aws.com/b4l2v8j6/immich/traefik:latest"
 ]
 
 tags = [

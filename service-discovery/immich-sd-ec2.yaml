@@ -29,9 +29,6 @@ Parameters:
     Type: String
     Default: ""
 
-  ImageLocationS3Uri:
-    Type: String
-
   CronScriptsS3URI:
     Type: String
 
@@ -50,6 +47,9 @@ Parameters:
   AcmeEmail:
     Type: String
     Description: Email address used for Let's Encrypt SSL certificate registration.
+
+  TraefikImageName:
+    Type: String
 
 Conditions:
   HasKey: !Not [!Equals [!Ref KeyPair, ""]]
@@ -271,8 +271,7 @@ Resources:
             aws s3 cp "${EnvFileS3URI}"/immich.env /opt/scheduled/var.env
             source /opt/scheduled/var.env   
                     
-            aws s3 cp ${ImageLocationS3Uri}/traefik.tar .
-            docker load -i traefik.tar
+            docker pull ${TraefikImageName}
             
             cat >/etc/systemd/system/traefik.service <<'EOF'
             [Unit]
@@ -294,7 +293,7 @@ Resources:
               -v /opt/traefik/acme.json:/etc/traefik/acme.json \
               -e AWS_REGION=${AWS::Region} \
               -e AWS_USE_DUALSTACK_ENDPOINT=true \
-              traefik:latest \
+              ${TraefikImageName} \
               --api.insecure=true \
               --providers.ecs=true \
               --providers.ecs.clusters=immich-cluster \

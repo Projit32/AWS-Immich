@@ -19,7 +19,7 @@ fi
 
 STATE=$(echo "$PARAM_JSON" | jq -r '.state')
 
-if [[ "$STATE" == "OFF" || "$STATE" == "FAILOVER_IN_PROGRESS" || "$STATE" == "RESTORE_IN_PROGRESS" ]]; then
+if [[ "$STATE" == "FAILOVER_IN_PROGRESS" || "$STATE" == "RESTORE_IN_PROGRESS" ]]; then
     echo "State is $STATE. Halting execution and leaving ECS service as-is."
     exit 0
 fi
