@@ -3,10 +3,6 @@ Description: Traefik EC2 Instance with SSL Security (Dual-Stack / IPv6 Compliant
 
 Parameters:
 
-  InstanceType:
-    Type: String
-    Default: t4g.nano
-
   InstanceMarketType:
     Type: String
     Default: spot
@@ -155,15 +151,6 @@ Resources:
                   - "ecs:DescribeTaskDefinition"
                   - "ec2:DescribeInstances"
                 Resource: "*"
-        - PolicyName: ssm-control
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:PutParameter
-                Resource: "*"
         - PolicyName: ecs-control
           PolicyDocument:
             Version: '2012-10-17'
@@ -197,7 +184,6 @@ Resources:
       LaunchTemplateName: !Sub "immich-SD-launch-template"
       LaunchTemplateData:
         ImageId: !Sub "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
-        InstanceType: !Ref InstanceType
         IamInstanceProfile:
           Arn: !GetAtt TraefikInstanceProfile.Arn
         KeyName: !If
@@ -245,19 +231,12 @@ Resources:
               sleep 2
             done
             
-            dnf install valkey cronie -y
-            systemctl enable --now crond
-            
             mkdir -p /opt/scheduled /opt/traefik
             
             # Create and set strict permissions for SSL certificate storage
             aws s3 cp ${EnvFileS3URI}/acme.json /opt/traefik/acme.json || touch /opt/traefik/acme.json
             chmod 600 /opt/traefik/acme.json
 
-            aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
-            chmod +x /opt/scheduled/microservice-cache-check.sh
-            aws s3 cp "${CronScriptsS3URI}"/ml-cache-check.sh /opt/scheduled/ml-cache-check.sh
-            chmod +x /opt/scheduled/ml-cache-check.sh
             aws s3 cp "${EnvFileS3URI}"/immich.env /opt/scheduled/var.env
             source /opt/scheduled/var.env   
                     
@@ -313,11 +292,6 @@ Resources:
             systemctl enable traefik.service
             systemctl start traefik.service
             
-            echo "Adding crontab entry"
-            echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $BACKEND_SSM_PARAM_NAME $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME $REDIS_HOSTNAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
-            crontab /tmp/mycrontab
-            
-            crontab -l 
             
             echo "+++++++++++++ SETTING ROUTE 53 +++++++++++++"
             # Fetch the network interface's MAC to query its assigned IPv6 address
@@ -372,7 +346,10 @@ Resources:
             LaunchTemplateId: !Ref TraefikLaunchTemplate
             Version: !GetAtt TraefikLaunchTemplate.LatestVersionNumber
           Overrides:
-            - InstanceType: !Ref InstanceType
+            - InstanceType: t4g.small
+            - InstanceType: c6g.medium
+            - InstanceType: m6g.medium
+
         InstancesDistribution:
           OnDemandBaseCapacity: !If [IsSpot, 0, 1]
           OnDemandPercentageAboveBaseCapacity: !If [IsSpot, 0, 100]

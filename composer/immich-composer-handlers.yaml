@@ -17,14 +17,13 @@ Parameters:
   RecordName:
     Type: String
 
-  StateParameterName:
-    Type: String
-    Default: /immich/db-cache/state
-
   ECSClusterName:
     Type: String
 
   ECSServiceNames:
+    Type: String
+
+  ServiceDiscoveryASGName:
     Type: String
 
 Globals:
@@ -101,40 +100,15 @@ Resources:
                   - ecs:UpdateService
                 Resource: "*"
 
-        - PolicyName: route53-control
-
+        - PolicyName: autoscaling-control
           PolicyDocument:
             Version: '2012-10-17'
 
             Statement:
               - Effect: Allow
                 Action:
-                  - route53:ChangeResourceRecordSets
-                  - route53:GetChange
-                Resource: "*"
-
-        - PolicyName: ssm-control
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:PutParameter
-                Resource: "*"
-
-        - PolicyName: eventbridge-control
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-              - Effect: Allow
-                Action:
-                  - events:EnableRule
-                  - events:DisableRule
+                  - autoscaling:UpdateAutoScalingGroup
+                  - autoscaling:DescribeAutoScalingGroups
                 Resource: "*"
 
 
@@ -184,13 +158,12 @@ Resources:
 
           RECORD_NAME: !Ref RecordName
 
-          STATE_PARAMETER: !Ref StateParameterName
-
           SPOT_LAUNCH_TEMPLATE_ID: !Ref SpotLaunchTemplateId
 
           ECS_CLUSTER_NAME: !Ref ECSClusterName
 
           ECS_SERVICE_NAMES: !Ref ECSServiceNames
+          SD_ASG_NAME: !Ref ServiceDiscoveryASGName
 
   ComposerLambdaCloudwatchLogGroup:
     Type: 'AWS::Logs::LogGroup'

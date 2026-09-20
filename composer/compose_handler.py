@@ -6,21 +6,20 @@ import boto3
 
 ec2 = boto3.client("ec2")
 route53 = boto3.client("route53")
-ssm = boto3.client("ssm")
 events = boto3.client("events")
 ecs = boto3.client("ecs")
+autoscaling = boto3.client("autoscaling")
 
 VOLUME_ID = os.environ["VOLUME_ID"]
 
 HOSTED_ZONE_ID = os.environ["HOSTED_ZONE_ID"]
 RECORD_NAME = os.environ["RECORD_NAME"]
 
-STATE_PARAMETER = os.environ["STATE_PARAMETER"]
-
 SPOT_LAUNCH_TEMPLATE_ID = os.environ["SPOT_LAUNCH_TEMPLATE_ID"]
 
 ECS_CLUSTER_NAME = os.environ["ECS_CLUSTER_NAME"]
 ECS_SERVICE_NAMES = os.environ["ECS_SERVICE_NAMES"]
+SD_ASG_NAME = os.environ["SD_ASG_NAME"]
 
 INSTANCE_STATUS_TIMEOUT = 600
 VOLUME_TIMEOUT = 120
@@ -33,73 +32,44 @@ def lambda_handler(event, context):
         stop_service()
 
 def start_service():
-    spot_instance_id = launch_spot_instance()
-    print("DB-Cache spot instance launched with id ", spot_instance_id)
-
-    time.sleep(5)
-
-    attach_volume(
-        instance_id=spot_instance_id,
-        volume_id=VOLUME_ID
-    )
-    print("Volume attached to DB-Cache instance")
-
-    wait_for_instance_status_ok(
-        spot_instance_id
-    )
-
-    private_ip = get_ip(
-        spot_instance_id
-    )
-
-    print("Private IP:", private_ip)
-
-
-    update_dns(
-        private_ip
-    )
-    print("DNS updated")
+    print("Switching on ECS Services...")
 
     switch_ecs_services(cluster_name=ECS_CLUSTER_NAME, service_names=ECS_SERVICE_NAMES.split(","),
                                desired_count=1)
 
     print("ECS updated")
 
-    update_state(
-        state="SPOT_ACTIVE",
-        instance_id=spot_instance_id
-    )
+    print("Switching on Service Discovery ASG...")
+    set_asg_desired_capacity(asg_name=SD_ASG_NAME, desired_capacity=1)
 
 def stop_service():
-    state = get_state()
-    print("Setting state to OFF")
-    update_state(
-        state="OFF"
-    )
+    print("Switching off ECS Services...")
 
-    switch_ecs_services(cluster_name=ECS_CLUSTER_NAME, service_names=[],
+    switch_ecs_services(cluster_name=ECS_CLUSTER_NAME, service_names=ECS_SERVICE_NAMES.split(","),
                                desired_count=0)
 
     print("ECS shut down")
-    time.sleep(10)
-    terminate_instance(state.get("activeInstanceId"))
-    print("DB-Cache terminated")
 
+    print("Switching off Service Discovery ASG...")
+    set_asg_desired_capacity(asg_name=SD_ASG_NAME, desired_capacity=0)
 
-
-def get_state():
+def set_asg_desired_capacity(asg_name: str, desired_capacity: int):
+    """
+    Updates the desired capacity of a specified Auto Scaling Group.
+    """
+    if not asg_name:
+        print("No ASG name provided. Skipping ASG update.")
+        return
 
     try:
-        response = ssm.get_parameter(
-            Name=STATE_PARAMETER
+        print(f"Setting ASG '{asg_name}' desired capacity to {desired_capacity}...")
+        autoscaling.update_auto_scaling_group(
+            AutoScalingGroupName=asg_name,
+            DesiredCapacity=desired_capacity
         )
-
-        return json.loads(
-            response["Parameter"]["Value"]
-        )
-
-    except Exception:
-        return {}
+        print(f"Successfully set ASG '{asg_name}' desired capacity to {desired_capacity}.")
+    except Exception as e:
+        print(f"An error occurred while updating ASG '{asg_name}': {e}")
 
 def switch_ecs_services(cluster_name: str, service_names:list[str] = list(), desired_count: int = 0):
 
@@ -132,7 +102,7 @@ def switch_ecs_services(cluster_name: str, service_names:list[str] = list(), des
                             print(f"Service '{service_name}' is already at desiredCount={desired_count}. Skipping.")
                             continue
 
-                        print(f"Scaling down service '{service_name}' (Current count: {current_count}) to {desired_count}...")
+                        print(f"Scaling service '{service_name}' (Current count: {current_count}) to {desired_count}...")
 
                         # Update the service
                         ecs.update_service(
@@ -146,159 +116,3 @@ def switch_ecs_services(cluster_name: str, service_names:list[str] = list(), des
 
     except Exception as e:
         print(f"An error occurred switching service: {e}")
-
-def wait_for_instance_status_ok(instance_id):
-
-    print(
-        f"Waiting for EC2 status checks: {instance_id}"
-    )
-
-    start = time.time()
-
-    while True:
-
-        response = ec2.describe_instance_status(
-            InstanceIds=[instance_id]
-        )
-
-        statuses = response.get(
-            "InstanceStatuses",
-            []
-        )
-
-        if statuses:
-
-            status = statuses[0]
-
-            system_ok = (
-                status["SystemStatus"]["Status"]
-                == "ok"
-            )
-
-            instance_ok = (
-                status["InstanceStatus"]["Status"]
-                == "ok"
-            )
-
-            print(
-                f"System={status['SystemStatus']['Status']} "
-                f"Instance={status['InstanceStatus']['Status']}"
-            )
-
-            if system_ok and instance_ok:
-                print(
-                    "Status checks passed"
-                )
-                return
-
-        if (
-            time.time() - start
-            > INSTANCE_STATUS_TIMEOUT
-        ):
-            raise TimeoutError(
-                f"Status checks timed out for {instance_id}"
-            )
-
-        time.sleep(10)
-
-def update_state(state, instance_id=""):
-
-    payload = {
-        "state": state,
-        "activeInstanceId": instance_id,
-        "updatedAt": int(time.time())
-    }
-
-    ssm.put_parameter(
-        Name=STATE_PARAMETER,
-        Value=json.dumps(payload),
-        Type="String",
-        Overwrite=True
-    )
-
-def attach_volume(instance_id, volume_id):
-
-    print(
-        f"Attaching volume {volume_id} to instance {instance_id}"
-    )
-
-    ec2.attach_volume(
-        VolumeId=volume_id,
-        InstanceId=instance_id,
-        Device="/dev/xvdbb"
-    )
-
-    print("Volume attached")
-
-def launch_spot_instance():
-
-    response = ec2.run_instances(
-        LaunchTemplate={
-            "LaunchTemplateId": SPOT_LAUNCH_TEMPLATE_ID,
-            "Version": "$Latest"
-        },
-        MinCount=1,
-        MaxCount=1
-    )
-
-    instance_id = response["Instances"][0]["InstanceId"]
-
-    print(
-        f"Spot instance launched: {instance_id}"
-    )
-
-    return instance_id
-
-def terminate_instance(instance_id):
-
-    print(
-        f"Terminating instance: {instance_id}"
-    )
-
-    ec2.terminate_instances(
-        InstanceIds=[instance_id]
-    )
-
-def get_ip(instance_id):
-
-    response = ec2.describe_instances(
-        InstanceIds=[instance_id]
-    )
-
-    return (
-        response["Reservations"][0]
-        ["Instances"][0]
-        ["PrivateIpAddress"]
-    )
-
-def update_dns(ip_address):
-
-    print(
-        f"Updating Route53: {RECORD_NAME} -> {ip_address}"
-    )
-
-    route53.change_resource_record_sets(
-        HostedZoneId=HOSTED_ZONE_ID,
-        ChangeBatch={
-            "Comment": "Immich PostgreSQL-Cache Failover",
-            "Changes": [
-                {
-                    "Action": "UPSERT",
-                    "ResourceRecordSet": {
-                        "Name": RECORD_NAME,
-                        "Type": "A",
-                        "TTL": 10,
-                        "ResourceRecords": [
-                            {
-                                "Value": ip_address
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-    )
-
-    print(
-        "Route53 updated"
-    )

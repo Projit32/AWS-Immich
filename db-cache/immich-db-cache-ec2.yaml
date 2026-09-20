@@ -1,30 +1,25 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Immich PostgreSQL & Valkey Launch Templates
+Transform: AWS::Serverless-2016-10-31
+Description: Immich PostgreSQL & Valkey Auto Scaling Architecture with Lifecycle Hooks
 
 Parameters:
-
   VpcId:
     Type: AWS::EC2::VPC::Id
 
   AllowedCIDR:
     Type: String
     Default: 10.0.0.0/8
-    Description: >
-      CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
+    Description: CIDR allowed to reach Postgres port 5432 and SSH. Use your VPC CIDR.
 
   InstanceType:
     Type: String
     Default: t4g.small
     AllowedValues:
-      - t4g.micro
       - t4g.small
       - t4g.medium
       - t4g.large
 
   EnvFileS3URI:
-    Type: String
-
-  ImageLocationS3Uri:
     Type: String
 
   KeyPair:
@@ -39,6 +34,24 @@ Parameters:
     Type: String
 
   PostgresImage:
+    Type: String
+
+  VolumeId:
+    Type: String
+
+  HostedZoneId:
+    Type: String
+
+  RecordName:
+    Type: String
+
+  ECSClusterName:
+    Type: String
+
+  ECSServiceNames:
+    Type: String
+
+  CronScriptsS3URI:
     Type: String
 
 Conditions:
@@ -89,7 +102,6 @@ Resources:
   DbRole:
     Type: AWS::IAM::Role
     Properties:
-
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -99,10 +111,35 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - sts:AssumeRole
-
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: ECSReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:ListClusters"
+                  - "ecs:DescribeClusters"
+                  - "ecs:ListTasks"
+                  - "ecs:DescribeTasks"
+                  - "ecs:ListContainerInstances"
+                  - "ecs:DescribeContainerInstances"
+                  - "ecs:DescribeTaskDefinition"
+                  - "ec2:DescribeInstances"
+                Resource: "*"
+        - PolicyName: ecs-control
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:ListServices
+                  - ecs:UpdateService
+                Resource: "*"
 
   DbInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -110,67 +147,95 @@ Resources:
       Roles:
         - !Ref DbRole
 
-  ###########################################################
-  # State Parameter
-  ###########################################################
-
-  StateParameter:
-    Type: AWS::SSM::Parameter
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      Name: /immich/db-cache/state
-      Type: String
-      Value: |
-        {
-          "state":"OFF",
-        }
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: asg-ec2-control
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstanceStatus
+                  - ec2:AttachVolume
+                  - ec2:CreateTags
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - autoscaling:CompleteLifecycleAction
+                  - autoscaling:RecordLifecycleActionHeartbeat
+                Resource: "*"
+        - PolicyName: route53-control
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                Resource: "*"
+        - PolicyName: ssm-control
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: "*"
+        - PolicyName: ecs-control
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:ListServices
+                  - ecs:UpdateService
+                Resource: "*"
 
   ###########################################################
-  # Spot Launch Template
+  # On-Demand Launch Template
   ###########################################################
 
-  SpotLaunchTemplate:
+  DbCacheLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
-
     Properties:
-
-      LaunchTemplateName:
-        !Sub immich-db-cache-spot
-
+      LaunchTemplateName: !Sub immich-db-cache-template
       LaunchTemplateData:
-
         ImageId: !Sub '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}'
-
         InstanceType: !Ref InstanceType
-
         KeyName: !If
           - HasKey
           - !Ref KeyPair
           - !Ref AWS::NoValue
-
         NetworkInterfaces:
           - DeviceIndex: 0
-            Ipv6AddressCount: 1
             SubnetId: !Ref SubnetId
             Groups:
               - !Ref DBCacheSecurityGroup
-        
         IamInstanceProfile:
           Arn: !GetAtt DbInstanceProfile.Arn
-
         MetadataOptions:
           HttpTokens: required
-
-        InstanceMarketOptions:
-          MarketType: spot
-
-        TagSpecifications:
-
-          - ResourceType: instance
-
-            Tags:
-              - Key: Name
-                Value: !Sub immich-db-cache-spot
-
         UserData:
           Fn::Base64:
             !Sub |
@@ -184,6 +249,8 @@ Resources:
               
               # Direct the agent to contact AWS endpoints via dual-stack DNS
               echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+            
+              aws configure set default.use_dualstack_endpoint true
               
               # Configure the host-level AWS CLI
               echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
@@ -201,27 +268,18 @@ Resources:
                 sleep 5
               done
               
-              
-              
               # ── 2. Format only if the volume has no filesystem (new volume) ────
-
               FS_TYPE=$(blkid -o value -s TYPE "$DEV" || true)
-
               if [ -z "$FS_TYPE" ]; then
                 mkfs.ext4 -L immich-db "$DEV"
               else
                 echo "Existing filesystem ($FS_TYPE) — skipping format, data preserved"
               fi
 
-
-
               # ── 3. Mount and persist via fstab ─────────────────────────────────
               mkdir -p /data/postgres
-
               mount "$DEV" /data/postgres
-
               UUID=$(blkid -s UUID -o value "$DEV")
-
               grep -q "$UUID" /etc/fstab || \
               echo "UUID=$UUID /data/postgres ext4 defaults,nofail 0 2" >> /etc/fstab
               
@@ -235,7 +293,6 @@ Resources:
               echo "Required files made"
 
               # ── 4. Parse env from S3 ──────────────────────────────────
-            
               aws s3 cp "${EnvFileS3URI}" ./var.env
               source ./var.env
               
@@ -245,17 +302,12 @@ Resources:
             
               echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
               
-      
               # ── 5. Pull Immich Postgres and Valkey image from ECR ──────────────────────────────────
               echo "Downloading images"
-            
               docker pull ${ValkeyImage}
-            
               docker pull ${PostgresImage}
               
-            
               # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
-
               cat >/etc/systemd/system/immich-db.service <<EOF
               [Unit]
               Description=Immich PostgreSQL
@@ -293,7 +345,6 @@ Resources:
               systemctl start immich-db.service
             
               # ── 7. Systemd service for lifecycle management for cache ────────────────────────────────────────
-              
               cat >/etc/systemd/system/valkey.service <<'EOF'
               [Unit]
               Description=Valkey Cache
@@ -316,7 +367,6 @@ Resources:
                 valkey-server --save 900 1 --appendonly yes --maxmemory-policy noeviction
               
               ExecStop=/usr/bin/docker stop -t 20 valkey-server
-              
               ExecStopPost=-/usr/bin/docker rm -f valkey-server
               TimeoutStopSpec=30
               
@@ -327,211 +377,126 @@ Resources:
               systemctl daemon-reload
               systemctl enable valkey.service
               systemctl start valkey.service
+            
+              # ------------------------------ CRON TAB CACHE CHECK ----------------
+              dnf install valkey cronie -y
+              systemctl enable --now crond
+              aws s3 cp "${CronScriptsS3URI}"/microservice-cache-check.sh /opt/scheduled/microservice-cache-check.sh
+              chmod +x /opt/scheduled/microservice-cache-check.sh
+            
+              echo "Adding crontab entry"
+              echo "*/5 * * * * /opt/scheduled/microservice-cache-check.sh $IMMICH_ECS_CLUSTER_NAME $IMMICH_ECS_WORKER_SERVICE_NAME > /var/log/microservice-cache-check.log 2>&1" >> /tmp/mycrontab
+              crontab /tmp/mycrontab
+              
+              crontab -l 
+            
               echo "INIT Success"
 
   ###########################################################
-  # OnDemand Launch Template
+  # Auto Scaling Group
   ###########################################################
 
-  OnDemandLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-
+  DbCacheASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: immich-db-cache-asg
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier:
+        - !Ref SubnetId
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DbCacheLaunchTemplate
+        Version: !GetAtt DbCacheLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: immich-db-cache
+          PropagateAtLaunch: true
 
-      LaunchTemplateName:
-        !Sub immich-db-cache-od
+  ###########################################################
+  # ASG Lifecycle Hooks
+  ###########################################################
 
-      LaunchTemplateData:
+  TerminatingLifecycleHook:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref DbCacheASG
+      LifecycleHookName: immich-db-cache-terminating-hook
+      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+      HeartbeatTimeout: 300
+      DefaultResult: CONTINUE
 
-        ImageId: !Sub '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}'
+  LaunchingLifecycleHook:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref DbCacheASG
+      LifecycleHookName: immich-db-cache-launching-hook
+      LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+      HeartbeatTimeout: 900
+      DefaultResult: ABANDON
 
-        InstanceType: !Ref InstanceType
+  #########################################################
+  # Lifecycle Orchestrator Lambda & EventBridge Rule
+  #########################################################
 
-        KeyName: !If
-          - HasKey
-          - !Ref KeyPair
-          - !Ref AWS::NoValue
+  ASGLifecycleEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: immich-db-cache-lifecycle-rule
+      Description: Capture ASG Terminating and Launching events
+      EventPattern:
+        source:
+          - aws.autoscaling
+        detail-type:
+          - EC2 Instance-terminate Lifecycle Action
+          - EC2 Instance-launch Lifecycle Action
+        detail:
+          AutoScalingGroupName:
+            - !Ref DbCacheASG
+      Targets:
+        - Arn: !GetAtt LifecycleFunction.Arn
+          Id: LifecycleFunctionTarget
 
-        NetworkInterfaces:
-          - DeviceIndex: 0
-            SubnetId: !Ref SubnetId
-            Groups:
-              - !Ref DBCacheSecurityGroup
+  LifecycleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: immich-db-cache-orchestrator
+      CodeUri: ./handlers/
+      Handler: lifecycle_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+      MemorySize: 128
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          VOLUME_ID: !Ref VolumeId
+          HOSTED_ZONE_ID: !Ref HostedZoneId
+          RECORD_NAME: !Ref RecordName
+          ECS_CLUSTER_NAME: !Ref ECSClusterName
+          ECS_SERVICE_NAMES: !Ref ECSServiceNames
 
-        IamInstanceProfile:
-          Arn: !GetAtt DbInstanceProfile.Arn
+  LifecycleFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LifecycleFunction}
+      RetentionInDays: 7
 
-        MetadataOptions:
-          HttpTokens: required
+  LifecyclePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LifecycleFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ASGLifecycleEventRule.Arn
 
-        TagSpecifications:
-
-          - ResourceType: instance
-
-            Tags:
-              - Key: Name
-                Value: !Sub immich-db-cache-od
-
-        UserData:
-          Fn::Base64:
-            !Sub |
-              #!/bin/bash
-              set -euo pipefail
-
-              exec > >(tee /var/log/immich-db-init.log | logger -t immich-db-init) 2>&1
-            
-              # Force agent to use IPv6 configurations
-              echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
-              
-              # Direct the agent to contact AWS endpoints via dual-stack DNS
-              echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
-              
-              # Configure the host-level AWS CLI
-              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
-              echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
-
-              echo "Waiting for EBS attachment..."
-
-              # ── 1. Wait for EBS volume to be attached ──────────────────────────
-              DEV="/dev/xvdbb"
-              while true; do
-                if [ -b "$DEV" ]; then
-                  echo "Found EBS volume: $DEV"
-                  break
-                fi
-                sleep 5
-              done
-              
-              
-              
-              # ── 2. Format only if the volume has no filesystem (new volume) ────
-
-              FS_TYPE=$(blkid -o value -s TYPE "$DEV" || true)
-
-              if [ -z "$FS_TYPE" ]; then
-                mkfs.ext4 -L immich-db "$DEV"
-              else
-                echo "Existing filesystem ($FS_TYPE) — skipping format, data preserved"
-              fi
-
-
-
-              # ── 3. Mount and persist via fstab ─────────────────────────────────
-              mkdir -p /data/postgres
-
-              mount "$DEV" /data/postgres
-
-              UUID=$(blkid -s UUID -o value "$DEV")
-
-              grep -q "$UUID" /etc/fstab || \
-              echo "UUID=$UUID /data/postgres ext4 defaults,nofail 0 2" >> /etc/fstab
-              
-              # Immich postgres image runs as uid 999
-              mkdir -p /data/postgres/data
-              chown -R 999:999 /data/postgres
-            
-              mkdir -p /data/valkey
-              chown -R 999:999 /data/valkey
-            
-              echo "Required files made"
-
-              # ── 4. Parse env from S3 ──────────────────────────────────
-            
-              aws s3 cp "${EnvFileS3URI}" ./var.env
-              source ./var.env
-              
-              DB_USER=$DB_USERNAME
-              DB_PASS=$DB_PASSWORD
-              DB_NAME=$DB_DATABASE_NAME
-            
-              echo "DB Credentials found for user : $DB_USER and name $DB_NAME" 
-              
-      
-              # ── 5. Pull Immich Postgres and Valkey image from ECR ──────────────────────────────────
-              echo "Downloading images"
-            
-              docker pull ${ValkeyImage}
-            
-              docker pull ${PostgresImage}
-              
-            
-              # ── 6. Systemd service for lifecycle management for DB ────────────────────────────────────────
-
-              cat >/etc/systemd/system/immich-db.service <<EOF
-              [Unit]
-              Description=Immich PostgreSQL
-              Requires=docker.service
-              After=docker.service network-online.target
-
-              [Service]
-              Type=simple
-              Restart=always
-              RestartSec=10
-
-              ExecStartPre=-/usr/bin/docker rm -f immich-postgres
-
-              ExecStart=/usr/bin/docker run \
-                --name immich-postgres \
-                --restart=no \
-                -p 5432:5432 \
-                -e POSTGRES_USER="$DB_USER" \
-                -e POSTGRES_PASSWORD="$DB_PASS" \
-                -e POSTGRES_DB="$DB_NAME" \
-                -v /data/postgres/data:/var/lib/postgresql/data \
-                ${PostgresImage}
-
-              ExecStop=/usr/bin/docker stop -t 60 immich-postgres
-              ExecStopPost=/usr/bin/sync
-              ExecStopPost=-/usr/bin/docker rm -f immich-postgres
-              TimeoutStopSpec=70
-
-              [Install]
-              WantedBy=multi-user.target
-              EOF
-
-              systemctl daemon-reload
-              systemctl enable immich-db.service
-              systemctl start immich-db.service
-            
-              # ── 7. Systemd service for lifecycle management for cache ────────────────────────────────────────
-              
-              cat >/etc/systemd/system/valkey.service <<'EOF'
-              [Unit]
-              Description=Valkey Cache
-              Requires=docker.service
-              After=docker.service
-              
-              [Service]
-              Type=simple
-              Restart=always
-              RestartSec=5
-              
-              ExecStartPre=-/usr/bin/docker rm -f valkey-server
-              
-              ExecStart=/usr/bin/docker run \
-                --name valkey-server \
-                --restart always \
-                -p 6379:6379 \
-                -v /data/valkey:/data \
-                ${ValkeyImage} \
-                valkey-server --save 900 1 --appendonly yes --maxmemory-policy noeviction
-              
-              ExecStop=/usr/bin/docker stop -t 20 valkey-server
-              
-              ExecStopPost=-/usr/bin/docker rm -f valkey-server
-              TimeoutStopSpec=30
-              
-              [Install]
-              WantedBy=multi-user.target
-              EOF
-              
-              systemctl daemon-reload
-              systemctl enable valkey.service
-              systemctl start valkey.service
-              echo "INIT Success"
 Outputs:
-  ODLaunchTemplate:
-    Value: !Ref OnDemandLaunchTemplate
+  LaunchTemplateId:
+    Value: !Ref DbCacheLaunchTemplate
 
-  SPOTLaunchTemplate:
-    Value: !Ref SpotLaunchTemplate
+  AutoScalingGroupName:
+    Value: !Ref DbCacheASG
+
+  LifecycleFunctionArn:
+    Value: !GetAtt LifecycleFunction.Arn

@@ -11,11 +11,12 @@ resolve_s3 = true
 
 parameter_overrides = [
   "SpotLaunchTemplateId=lt-03dc06539a177caa1",
-  "VolumeId=vol-0eff706947d42e7b6",
+  "VolumeId=vol-00fcfc88124c93032",
   "HostedZoneId=Z02289381ARPAOGOTJFBT",               # Tighten this to your actual VPC CIDR
   "RecordName=backend.ap-south-2.immich.internal",
   "ECSClusterName=immich-cluster",
-  "ECSServiceNames=immich-api-service"
+  "ECSServiceNames=immich-api-service",
+  "ServiceDiscoveryASGName=immich-service-discovery-asg"
 ]
 
 # Tags applied to all resources in the stack

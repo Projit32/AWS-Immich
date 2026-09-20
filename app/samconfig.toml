@@ -12,11 +12,11 @@ fail_on_empty_changeset = false
 parameter_overrides = [
   "VpcId=vpc-09f10291c29a1a7cf",
   "SubnetIds=subnet-0436d6552c6a53c4f",
-  "S3FilesystemId=fs-0cb352e1b01128274",
+  "S3FilesystemId=fs-051b6b7ef104b7a85",
   "EnvFileS3Arn=arn:aws:s3:::immich-conf-ap-south-2-704678691702/immich.env",
   "HostName=immich.proapplication.net",
   "KeyPair=immich",
-  "ImageName=ecr-public.aws.com/<your-alias>/immich/immich-server:release"
+  "ImageName=ecr-public.aws.com/b4l2v8j6/immich/immich-server:v3.2.0"
 ]
 
 tags = [

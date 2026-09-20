@@ -2,29 +2,9 @@
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # --- CONFIGURATION ---
-SSM_PARAM_NAME=$1
-ECS_CLUSTER_NAME=$2      # <-- Replace with your ECS Cluster name
-ECS_SERVICE_NAME=$3       # <-- Replace with your ECS Service name
-CACHE_HOST=$4
-
-# --- 1. CHECK SSM STATE ---
-echo "Checking SSM parameter: $SSM_PARAM_NAME"
-
-PARAM_JSON=$(aws ssm get-parameter --name "$SSM_PARAM_NAME" --with-decryption --query "Parameter.Value" --output text 2>/dev/null)
-
-if [ -z "$PARAM_JSON" ]; then
-    echo "Error: Failed to fetch SSM parameter or parameter is empty."
-    exit 1
-fi
-
-STATE=$(echo "$PARAM_JSON" | jq -r '.state')
-
-if [[ "$STATE" == "OFF" || "$STATE" == "FAILOVER_IN_PROGRESS" || "$STATE" == "RESTORE_IN_PROGRESS" ]]; then
-    echo "State is $STATE. Halting execution and leaving ECS service as-is."
-    exit 0
-fi
-
-echo "State is $STATE. Proceeding to evaluate queue..."
+ECS_CLUSTER_NAME=$1     # <-- Replace with your ECS Cluster name
+ECS_SERVICE_NAME=$2       # <-- Replace with your ECS Service name
+CACHE_HOST=localhost
 
 # --- 2. EVALUATE VALKEY QUEUES ---
 TOTAL_JOBS=0

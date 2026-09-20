@@ -30,52 +30,35 @@ tags = [
   "Project=immich"
 ]
 
-# ── EC2 Template Stack ─────────────────────────────────────────────────────────────────
+# ── EC2 ASG Stack ─────────────────────────────────────────────────────────────────
+
 [ec2.deploy.parameters]
-stack_name        = "immich-db-cache-ec2"
+stack_name        = "immich-db-cache"
 template_file     = "immich-db-cache-ec2.yaml"
 region            = "ap-south-2"
 capabilities      = "CAPABILITY_NAMED_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
+resolve_s3        = true
+s3_prefix         = "immich-db-asg-handlers"
 
 parameter_overrides = [
   "VpcId=vpc-09f10291c29a1a7cf",
-  "InstanceType=t4g.micro",
-  "AllowedCIDR=10.0.0.0/16",              # Tighten this to your actual VPC CIDR
+  "InstanceType=t4g.small",
+  "AllowedCIDR=10.0.0.0/16",
   "EnvFileS3URI=s3://immich-conf-ap-south-2-704678691702/immich.env",
   "KeyPair=immich",
   "SubnetId=subnet-0436d6552c6a53c4f",
-  "ValkeyImage=ecr-public.aws.com/<your-alias>/immich/valkey:9",
-  "PostgresImage=ecr-public.aws.com/<your-alias>/immich/postgres:14-vectorchord0.4.3"
-]
-
-# Tags applied to all resources in the stack
-tags = [
-  "Project=immich"
-]
-
-# ── Lambda Stack ─────────────────────────────────────────────────────────────────
-[handlers.deploy.parameters]
-stack_name        = "immich-spot-handlers"
-template_file     = "immich-spot-handlers.yaml"
-region            = "ap-south-2"
-capabilities      = "CAPABILITY_NAMED_IAM"
-confirm_changeset = true
-fail_on_empty_changeset = false
-resolve_s3 = true
-s3_prefix = "immich-db-handlers"
-
-parameter_overrides = [
-  "SpotLaunchTemplateId=lt-03dc06539a177caa1",
-  "OnDemandLaunchTemplateId=lt-0906791cbfcd5ea48",
-  "VolumeId=vol-0eff706947d42e7b6",
-  "HostedZoneId=Z02289381ARPAOGOTJFBT",              # Tighten this to your actual VPC CIDR
+  "ValkeyImage=ecr-public.aws.com/b4l2v8j6/immich/valkey:9",
+  "PostgresImage=ecr-public.aws.com/b4l2v8j6/immich/postgres:14-vectorchord0.4.3",
+  "VolumeId=vol-00fcfc88124c93032",
+  "HostedZoneId=Z02289381ARPAOGOTJFBT",
   "RecordName=backend.ap-south-2.immich.internal",
-  "ECSClusterName=immich-cluster"
+  "ECSClusterName=immich-cluster",
+  "ECSServiceNames=immich-api-service",
+  "CronScriptsS3URI=s3://immich-conf-ap-south-2-704678691702/scripts"
 ]
 
-# Tags applied to all resources in the stack
 tags = [
   "Project=immich"
 ]
