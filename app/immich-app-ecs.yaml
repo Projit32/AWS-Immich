@@ -100,6 +100,23 @@ Resources:
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemsUtils
+
+  WorkerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FilesClientFullAccess
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemsUtils
 
 
   ECSInstanceProfile:
@@ -190,62 +207,62 @@ Resources:
               echo "Added ${S3FilesystemId} to /etc/fstab"
             fi
 
-  WorkerLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub "immich-worker-lt"
-      LaunchTemplateData:
-        MetadataOptions:
-          HttpTokens: required
-          HttpProtocolIpv6: enabled
-          HttpPutResponseHopLimit: 2
-
-        TagSpecifications:
-          - ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: !Sub Immich-Worker
-
-        IamInstanceProfile:
-          Arn: !GetAtt ECSInstanceProfile.Arn
-        # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
-        NetworkInterfaces:
-          - DeviceIndex: 0
-            AssociatePublicIpAddress: false
-            Ipv6AddressCount: 1
-            Groups:
-              - !Ref HostSecurityGroup
-        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -euo pipefail
-            exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
-            
-            # Configure ECS agent
-            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
-            
-            # Force agent to use IPv6 configurations
-            echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
-            
-            # Direct the agent to contact AWS endpoints via dual-stack DNS
-            echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
-            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
-            
-            # Configure host AWS CLI
-            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
-            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
-            
-            # Mount S3 Filesystem
-            mkdir -p /mnt/immich
-            if ! mountpoint -q /mnt/immich; then
-              mount -t s3files ${S3FilesystemId}:/ /mnt/immich
-              echo "Mounted ${S3FilesystemId} to /mnt/immich"
-            fi
-            if ! grep -q "${S3FilesystemId}" /etc/fstab; then
-              echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
-              echo "Added ${S3FilesystemId} to /etc/fstab"
-            fi
+#  WorkerLaunchTemplate:
+#    Type: AWS::EC2::LaunchTemplate
+#    Properties:
+#      LaunchTemplateName: !Sub "immich-worker-lt"
+#      LaunchTemplateData:
+#        MetadataOptions:
+#          HttpTokens: required
+#          HttpProtocolIpv6: enabled
+#          HttpPutResponseHopLimit: 2
+#
+#        TagSpecifications:
+#          - ResourceType: instance
+#            Tags:
+#              - Key: Name
+#                Value: !Sub Immich-Worker
+#
+#        IamInstanceProfile:
+#          Arn: !GetAtt ECSInstanceProfile.Arn
+#        # Replaced root SecurityGroupIds with NetworkInterfaces to configure IP assignment
+#        NetworkInterfaces:
+#          - DeviceIndex: 0
+#            AssociatePublicIpAddress: false
+#            Ipv6AddressCount: 1
+#            Groups:
+#              - !Ref HostSecurityGroup
+#        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id}}"
+#        UserData:
+#          Fn::Base64: !Sub |
+#            #!/bin/bash
+#            set -euo pipefail
+#            exec > >(tee /var/log/immich-ecs-init.log | logger -t immich-ecs-init) 2>&1
+#
+#            # Configure ECS agent
+#            echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+#
+#            # Force agent to use IPv6 configurations
+#            echo "ECS_INSTANCE_IP_COMPATIBILITY=ipv6" >> /etc/ecs/ecs.config
+#
+#            # Direct the agent to contact AWS endpoints via dual-stack DNS
+#            echo "AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/ecs/ecs.config
+#            echo "ECS_IMAGE_PULL_BEHAVIOR=prefer-cached" >> /etc/ecs/ecs.config
+#
+#            # Configure host AWS CLI
+#            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/profile.d/aws-ipv6.sh
+#            echo "export AWS_USE_DUALSTACK_ENDPOINT=true" >> /etc/bashrc
+#
+#            # Mount S3 Filesystem
+#            mkdir -p /mnt/immich
+#            if ! mountpoint -q /mnt/immich; then
+#              mount -t s3files ${S3FilesystemId}:/ /mnt/immich
+#              echo "Mounted ${S3FilesystemId} to /mnt/immich"
+#            fi
+#            if ! grep -q "${S3FilesystemId}" /etc/fstab; then
+#              echo "${S3FilesystemId}:/ /mnt/immich s3files _netdev,nofail 0 0" >> /etc/fstab
+#              echo "Added ${S3FilesystemId} to /etc/fstab"
+#            fi
 
   ApiASG:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -268,27 +285,27 @@ Resources:
             - InstanceType: t4g.micro
             - InstanceType: t4g.small
 
-  WorkerASG:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      AutoScalingGroupName: !Sub "immich-worker-asg"
-      MinSize: "0"
-      MaxSize: "3"
-      DesiredCapacity: "0"
-      VPCZoneIdentifier: !Ref SubnetIds
-      NewInstancesProtectedFromScaleIn: true
-      MixedInstancesPolicy:
-        InstancesDistribution:
-          OnDemandPercentageAboveBaseCapacity: 0
-          SpotAllocationStrategy: price-capacity-optimized
-        LaunchTemplate:
-          LaunchTemplateSpecification:
-            LaunchTemplateId: !Ref WorkerLaunchTemplate
-            Version: !GetAtt WorkerLaunchTemplate.LatestVersionNumber
-          Overrides:
-            - InstanceType: c6g.large
-            - InstanceType: c7g.large
-            - InstanceType: c8g.large
+#  WorkerASG:
+#    Type: AWS::AutoScaling::AutoScalingGroup
+#    Properties:
+#      AutoScalingGroupName: !Sub "immich-worker-asg"
+#      MinSize: "0"
+#      MaxSize: "3"
+#      DesiredCapacity: "0"
+#      VPCZoneIdentifier: !Ref SubnetIds
+#      NewInstancesProtectedFromScaleIn: true
+#      MixedInstancesPolicy:
+#        InstancesDistribution:
+#          OnDemandPercentageAboveBaseCapacity: 0
+#          SpotAllocationStrategy: price-capacity-optimized
+#        LaunchTemplate:
+#          LaunchTemplateSpecification:
+#            LaunchTemplateId: !Ref WorkerLaunchTemplate
+#            Version: !GetAtt WorkerLaunchTemplate.LatestVersionNumber
+#          Overrides:
+#            - InstanceType: c6g.large
+#            - InstanceType: c7g.large
+#            - InstanceType: c8g.large
 
   ApiCapacityProvider:
     Type: AWS::ECS::CapacityProvider
@@ -302,17 +319,17 @@ Resources:
           MinimumScalingStepSize: 1
           MaximumScalingStepSize: 1
 
-  WorkerCapacityProvider:
-    Type: AWS::ECS::CapacityProvider
-    Properties:
-      AutoScalingGroupProvider:
-        ManagedTerminationProtection: ENABLED
-        AutoScalingGroupArn: !Ref WorkerASG
-        ManagedScaling:
-          Status: ENABLED
-          TargetCapacity: 100
-          MinimumScalingStepSize: 1
-          MaximumScalingStepSize: 1
+#  WorkerCapacityProvider:
+#    Type: AWS::ECS::CapacityProvider
+#    Properties:
+#      AutoScalingGroupProvider:
+#        ManagedTerminationProtection: ENABLED
+#        AutoScalingGroupArn: !Ref WorkerASG
+#        ManagedScaling:
+#          Status: ENABLED
+#          TargetCapacity: 100
+#          MinimumScalingStepSize: 1
+#          MaximumScalingStepSize: 1
 
   ClusterCapacityProviders:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
@@ -324,7 +341,8 @@ Resources:
           Base: 0
       CapacityProviders:
         - !Ref ApiCapacityProvider
-        - !Ref WorkerCapacityProvider
+#        - !Ref WorkerCapacityProvider
+        - FARGATE_SPOT
 
   ApiTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -371,40 +389,40 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
 
-  WorkerTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: immich-microservices
-      NetworkMode: awsvpc
-      RequiresCompatibilities: [EC2]
-      Cpu: 2048
-      Memory: 3700
-      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
-      Volumes:
-        - Name: uploads
-          Host:
-            SourcePath: /mnt/immich/upload
-      ContainerDefinitions:
-        - Name: immich-microservices
-          Image: !Ref ImageName
-          Essential: true
-          Cpu: 2048
-          Memory: 3700
-          EnvironmentFiles:
-            - Type: s3
-              Value: !Ref EnvFileS3Arn
-          Environment:
-            - Name: IMMICH_WORKERS_EXCLUDE
-              Value: api
-          MountPoints:
-            - SourceVolume: uploads
-              ContainerPath: /usr/src/app/upload
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: /ecs/immich-microservices
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+#  WorkerTaskDefinition:
+#    Type: AWS::ECS::TaskDefinition
+#    Properties:
+#      Family: immich-microservices
+#      NetworkMode: awsvpc
+#      RequiresCompatibilities: [EC2]
+#      Cpu: 2048
+#      Memory: 3700
+#      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+#      Volumes:
+#        - Name: uploads
+#          Host:
+#            SourcePath: /mnt/immich/upload
+#      ContainerDefinitions:
+#        - Name: immich-microservices
+#          Image: !Ref ImageName
+#          Essential: true
+#          Cpu: 2048
+#          Memory: 3700
+#          EnvironmentFiles:
+#            - Type: s3
+#              Value: !Ref EnvFileS3Arn
+#          Environment:
+#            - Name: IMMICH_WORKERS_EXCLUDE
+#              Value: api
+#          MountPoints:
+#            - SourceVolume: uploads
+#              ContainerPath: /usr/src/app/upload
+#          LogConfiguration:
+#            LogDriver: awslogs
+#            Options:
+#              awslogs-group: /ecs/immich-microservices
+#              awslogs-region: !Ref AWS::Region
+#              awslogs-stream-prefix: ecs
 
   ApiService:
     Type: AWS::ECS::Service
@@ -428,6 +446,67 @@ Resources:
           Weight: 1
       TaskDefinition: !Ref ApiTaskDefinition
 
+#  WorkerService:
+#    Type: AWS::ECS::Service
+#    DependsOn:
+#      - ClusterCapacityProviders
+#    Properties:
+#      ServiceName: "immich-worker-service"
+#      Cluster: !Ref ECSCluster
+#      DesiredCount: 0
+#      AvailabilityZoneRebalancing: DISABLED
+#      NetworkConfiguration:
+#        AwsvpcConfiguration:
+#          Subnets: !Ref SubnetIds
+#          SecurityGroups:
+#            - !Ref HostSecurityGroup
+#      DeploymentConfiguration:
+#        MinimumHealthyPercent: 0
+#        MaximumPercent: 100
+#      CapacityProviderStrategy:
+#        - CapacityProvider: !Ref WorkerCapacityProvider
+#          Weight: 1
+#      TaskDefinition: !Ref WorkerTaskDefinition
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: immich-microservices
+      NetworkMode: awsvpc
+      RuntimePlatform:
+        CpuArchitecture: "ARM64" # Options: X86_64 or ARM64
+        OperatingSystemFamily: "LINUX" # e.g., LINUX or WINDOWS_SERVER_2019_CORE
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "2048"
+      Memory: "4096"
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt WorkerTaskRole.Arn
+      Volumes:
+        - Name: uploads
+          S3FilesVolumeConfiguration:
+            FileSystemArn: !Sub "arn:aws:s3files:${AWS::Region}:${AWS::AccountId}:file-system/${S3FilesystemId}"
+            RootDirectory: upload/
+      ContainerDefinitions:
+        - Name: immich-microservices
+          Image: !Ref ImageName
+          Essential: true
+          EnvironmentFiles:
+            - Type: s3
+              Value: !Ref EnvFileS3Arn
+          Environment:
+            - Name: IMMICH_WORKERS_EXCLUDE
+              Value: api
+          MountPoints:
+            - SourceVolume: uploads
+              ContainerPath: /usr/src/app/upload
+#          LogConfiguration:
+#            LogDriver: awslogs
+#            Options:
+#              awslogs-group: /ecs/immich-microservices
+#              awslogs-region: !Ref AWS::Region
+#              awslogs-stream-prefix: ecs
+
   WorkerService:
     Type: AWS::ECS::Service
     DependsOn:
@@ -446,8 +525,9 @@ Resources:
         MinimumHealthyPercent: 0
         MaximumPercent: 100
       CapacityProviderStrategy:
-        - CapacityProvider: !Ref WorkerCapacityProvider
+        - CapacityProvider: FARGATE_SPOT
           Weight: 1
+          Base: 0
       TaskDefinition: !Ref WorkerTaskDefinition
 
 Outputs:
@@ -463,5 +543,5 @@ Outputs:
   APILaunchTemplate:
     Value: !Ref ApiLaunchTemplate
 
-  WorkerLaunchTemplate:
-    Value: !Ref WorkerLaunchTemplate
+#  WorkerLaunchTemplate:
+#    Value: !Ref WorkerLaunchTemplate
